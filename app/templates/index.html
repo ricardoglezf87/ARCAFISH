@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<header class="topbar">
+  <div>
+    <h1>ARCAFISH</h1>
+    <p>Pronóstico de pesca desde costa · Islas Canarias</p>
+  </div>
+  <div class="topbar-status" id="app-status">Listo</div>
+</header>
+
+<div class="app-shell">
+  <aside class="spots-panel">
+    <div class="panel-head">
+      <h2>Puntos</h2>
+      <button class="icon-button" id="refresh-spots" title="Actualizar puntos" aria-label="Actualizar puntos">↻</button>
+    </div>
+
+    <form id="spot-form" class="spot-form" hidden>
+      <input type="hidden" id="spot-lat">
+      <input type="hidden" id="spot-lon">
+      <label for="spot-name">Nombre</label>
+      <input id="spot-name" name="name" type="text" maxlength="120" required placeholder="Punta, playa o espigón">
+      <label for="spot-notes">Notas</label>
+      <textarea id="spot-notes" name="notes" maxlength="1000" rows="3" placeholder="Acceso, fondo, seguridad..."></textarea>
+      <div class="form-coordinates" id="form-coordinates"></div>
+      <div class="form-actions">
+        <button type="submit" class="primary-button">Guardar</button>
+        <button type="button" class="ghost-button" id="cancel-spot">Cancelar</button>
+      </div>
+    </form>
+
+    <ul class="spots-list" id="spots-list"></ul>
+    <p class="empty-state" id="spots-empty">Sin puntos guardados.</p>
+  </aside>
+
+  <main class="workspace">
+    <section class="map-section" aria-label="Mapa de puntos de pesca">
+      <div id="map"></div>
+      <div class="map-hint" id="map-hint">Clic en la costa para guardar un punto.</div>
+    </section>
+
+    <section class="forecast-panel" id="forecast-panel">
+      <div class="forecast-empty">
+        <h2>Pronóstico</h2>
+        <p>Selecciona un punto para ver la previsión horaria.</p>
+      </div>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.ARCAFISH_CONFIG = {
+    bounds: {{ bounds | tojson }},
+    mapCenter: [28.3, -16.2],
+    mapZoom: 8
+  };
+</script>
+<script src="{{ url_for('static', path='/js/forecast.js') }}"></script>
+<script src="{{ url_for('static', path='/js/map.js') }}"></script>
+{% endblock %}
+

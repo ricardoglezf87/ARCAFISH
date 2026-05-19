@@ -1,0 +1,651 @@
+:root {
+  --ink: #16232b;
+  --muted: #62727c;
+  --panel: #f6f8f7;
+  --surface: #ffffff;
+  --line: #d8e0dd;
+  --sea: #1976b9;
+  --bad: #c7372f;
+  --regular: #d8891c;
+  --good: #1f8a5b;
+  --great: #0786a8;
+  --shadow: 0 10px 30px rgba(22, 35, 43, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: #edf2f0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.topbar {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 22px;
+  color: #f8fbfb;
+  background: #173247;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0;
+}
+
+.topbar p {
+  margin: 3px 0 0;
+  color: #cfe0e3;
+  font-size: 0.92rem;
+}
+
+.topbar-status {
+  min-width: 90px;
+  max-width: 42vw;
+  padding: 7px 10px;
+  color: #d9f0ea;
+  border: 1px solid rgba(217, 240, 234, 0.38);
+  border-radius: 6px;
+  text-align: center;
+  font-size: 0.86rem;
+}
+
+.app-shell {
+  height: calc(100vh - 72px);
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+
+.spots-panel,
+.forecast-panel {
+  background: var(--panel);
+}
+
+.spots-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-head h2,
+.forecast-empty h2,
+.forecast-title h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0;
+}
+
+.icon-button,
+.ghost-button,
+.primary-button,
+.danger-button {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.icon-button {
+  width: 38px;
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.primary-button {
+  color: white;
+  background: #1c6f56;
+  padding: 0 14px;
+}
+
+.ghost-button {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line);
+  padding: 0 14px;
+}
+
+.danger-button {
+  color: var(--bad);
+  background: #fff;
+  border-color: #efc6c1;
+  padding: 0 10px;
+}
+
+.spot-form {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.spot-form label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.spot-form input,
+.spot-form textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  color: var(--ink);
+  background: #fbfdfc;
+}
+
+.form-coordinates {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.spots-list {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.spot-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid #8aa2a4;
+  border-radius: 8px;
+}
+
+.spot-item.active {
+  border-left-color: var(--sea);
+  box-shadow: var(--shadow);
+}
+
+.spot-name {
+  display: block;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.spot-meta,
+.empty-state,
+.forecast-empty p,
+.small-muted {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.workspace {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(360px, 52vh) minmax(0, 1fr);
+}
+
+.map-section {
+  position: relative;
+  min-height: 320px;
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+  background: #c9d7d3;
+}
+
+/* Critical Leaflet layout fallback in case CDN CSS is unavailable. */
+.leaflet-container {
+  position: relative;
+  overflow: hidden;
+  outline-offset: 1px;
+  touch-action: pan-x pan-y;
+}
+
+.leaflet-pane,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow,
+.leaflet-tile-container,
+.leaflet-pane > svg,
+.leaflet-pane > canvas,
+.leaflet-zoom-box,
+.leaflet-image-layer,
+.leaflet-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow {
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.leaflet-tile {
+  width: 256px;
+  height: 256px;
+}
+
+.leaflet-pane {
+  z-index: 400;
+}
+
+.leaflet-tile-pane {
+  z-index: 200;
+}
+
+.leaflet-overlay-pane {
+  z-index: 400;
+}
+
+.leaflet-shadow-pane {
+  z-index: 500;
+}
+
+.leaflet-marker-pane {
+  z-index: 600;
+}
+
+.leaflet-tooltip-pane {
+  z-index: 650;
+}
+
+.leaflet-popup-pane {
+  z-index: 700;
+}
+
+.leaflet-control {
+  position: relative;
+  z-index: 800;
+  pointer-events: auto;
+}
+
+.leaflet-top,
+.leaflet-bottom {
+  position: absolute;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.leaflet-top {
+  top: 0;
+}
+
+.leaflet-right {
+  right: 0;
+}
+
+.leaflet-bottom {
+  bottom: 0;
+}
+
+.leaflet-left {
+  left: 0;
+}
+
+.leaflet-control {
+  float: left;
+  clear: both;
+}
+
+.leaflet-right .leaflet-control {
+  float: right;
+}
+
+.leaflet-top .leaflet-control {
+  margin-top: 10px;
+}
+
+.leaflet-bottom .leaflet-control {
+  margin-bottom: 10px;
+}
+
+.leaflet-left .leaflet-control {
+  margin-left: 10px;
+}
+
+.leaflet-right .leaflet-control {
+  margin-right: 10px;
+}
+
+.leaflet-control-zoom {
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.16);
+}
+
+.leaflet-control-zoom a {
+  display: block;
+  width: 32px;
+  height: 32px;
+  line-height: 30px;
+  color: #173247;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+  text-decoration: none;
+  font-weight: 900;
+}
+
+.leaflet-control-zoom a:last-child {
+  border-bottom: 0;
+}
+
+.leaflet-control-attribution {
+  padding: 3px 6px;
+  color: #40515a;
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 0.68rem;
+}
+
+.leaflet-control-attribution a {
+  color: #1b6a94;
+}
+
+.map-hint {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 500;
+  max-width: min(420px, calc(100% - 32px));
+  padding: 9px 12px;
+  color: #12303f;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(22, 35, 43, 0.12);
+  font-size: 0.88rem;
+}
+
+.spot-marker {
+  width: 20px;
+  height: 20px;
+  border: 3px solid white;
+  border-radius: 50%;
+  background: #697a82;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+}
+
+.spot-marker.bad {
+  background: var(--bad);
+}
+
+.spot-marker.regular {
+  background: var(--regular);
+}
+
+.spot-marker.good {
+  background: var(--good);
+}
+
+.spot-marker.great {
+  background: var(--great);
+}
+
+.forecast-panel {
+  min-height: 0;
+  padding: 18px;
+  border-top: 1px solid var(--line);
+  overflow: auto;
+}
+
+.forecast-empty {
+  display: grid;
+  gap: 8px;
+  place-items: start;
+  max-width: 620px;
+}
+
+.forecast-title {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  margin-bottom: 16px;
+}
+
+.score-tile {
+  display: grid;
+  place-items: center;
+  min-height: 132px;
+  color: white;
+  background: var(--sea);
+  border-radius: 8px;
+}
+
+.score-value {
+  font-size: 2.4rem;
+  font-weight: 900;
+}
+
+.score-label {
+  font-weight: 800;
+}
+
+.score-tile.bad,
+.quality-badge.bad {
+  background: var(--bad);
+}
+
+.score-tile.regular,
+.quality-badge.regular {
+  background: var(--regular);
+}
+
+.score-tile.good,
+.quality-badge.good {
+  background: var(--good);
+}
+
+.score-tile.great,
+.quality-badge.great {
+  background: var(--great);
+}
+
+.summary-copy {
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.summary-copy p {
+  margin: 0 0 10px;
+}
+
+.alert-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.alert-pill,
+.quality-badge,
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.alert-pill {
+  color: #8f221d;
+  background: #ffe8e5;
+}
+
+.quality-badge,
+.meta-pill {
+  color: white;
+  background: #6b7b83;
+}
+
+.meta-pill {
+  background: #50636d;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.88rem;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: #40515a;
+  background: #eef4f1;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+tr:last-child td {
+  border-bottom: 0;
+}
+
+.hour-score {
+  width: 48px;
+  display: inline-flex;
+  justify-content: center;
+  padding: 5px 7px;
+  color: white;
+  border-radius: 6px;
+  font-weight: 900;
+}
+
+.hour-score.bad {
+  background: var(--bad);
+}
+
+.hour-score.regular {
+  background: var(--regular);
+}
+
+.hour-score.good {
+  background: var(--good);
+}
+
+.hour-score.great {
+  background: var(--great);
+}
+
+.forecast-error {
+  padding: 14px;
+  color: #85221d;
+  background: #ffe8e5;
+  border: 1px solid #efc6c1;
+  border-radius: 8px;
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    height: auto;
+    min-height: calc(100vh - 72px);
+    grid-template-columns: 1fr;
+  }
+
+  .spots-panel {
+    max-height: 320px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .workspace {
+    grid-template-rows: 52vh auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .topbar-status {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .forecast-title {
+    flex-direction: column;
+  }
+}
