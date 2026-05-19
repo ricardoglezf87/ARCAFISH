@@ -29,8 +29,9 @@ def on_startup() -> None:
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
-        "index.html",
-        {
+        request=request,
+        name="index.html",
+        context={
             "request": request,
             "app_name": settings.app_name,
             "bounds": {
@@ -41,4 +42,3 @@ def index(request: Request) -> HTMLResponse:
             },
         },
     )
-

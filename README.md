@@ -40,6 +40,8 @@ Las variables principales están en `.env.example`:
 - `HTTP_VERIFY_SSL`: déjalo en `true`. En algunos entornos corporativos o Python local sin CA correcta puede requerirse `false` para desarrollo, aceptando el riesgo de no verificar TLS.
 - `AEMET_API_KEY`, `STORMGLASS_API_KEY`, `WORLDTIDES_API_KEY`: preparadas para proveedores futuros.
 
+En Windows, `tzdata` es necesario para que Python reconozca `Atlantic/Canary`.
+
 ## APIs utilizadas
 
 - Open-Meteo Weather: `https://open-meteo.com/en/docs`
