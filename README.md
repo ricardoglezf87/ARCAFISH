@@ -28,6 +28,8 @@ uvicorn app.main:app --reload
 
 Abre `http://127.0.0.1:8000`.
 
+En Windows también puedes hacer doble clic en `run_arcafish.bat`. El script crea `.venv` si no existe, instala dependencias, copia `.env.example` a `.env` si hace falta y arranca el servidor.
+
 ## Variables de entorno
 
 Las variables principales están en `.env.example`:
