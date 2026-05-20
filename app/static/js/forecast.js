@@ -3,7 +3,8 @@ const ForecastUI = (() => {
   const state = {
     forecast: null,
     selectedSpecies: "general",
-    selectedDay: "all"
+    selectedDay: "all",
+    intervalHours: 3
   };
 
   async function loadForecast(spotId) {
@@ -108,6 +109,7 @@ const ForecastUI = (() => {
 
     bindSpeciesButtons();
     bindDayButtons();
+    bindIntervalControl();
   }
 
   function renderSpeciesCards(forecast) {
@@ -143,6 +145,19 @@ const ForecastUI = (() => {
     }
   }
 
+  function bindIntervalControl() {
+    const input = document.getElementById("interval-hours");
+    if (!input) return;
+    const updateInterval = () => {
+      const nextValue = clampInterval(input.value);
+      input.value = String(nextValue);
+      state.intervalHours = nextValue;
+      renderForecast();
+    };
+    input.addEventListener("change", updateInterval);
+    input.addEventListener("blur", updateInterval);
+  }
+
   function currentSummary() {
     if (state.selectedSpecies === "general") {
       return state.forecast.summary;
@@ -172,7 +187,14 @@ const ForecastUI = (() => {
     return `
       <div class="table-toolbar">
         <div class="day-tabs">${renderDayTabs(rows)}</div>
-        <div class="small-muted">${visibleRows.length} tramos visibles de ${rows.length}</div>
+        <div class="table-tools">
+          <label class="interval-control" for="interval-hours">
+            Intervalo
+            <input id="interval-hours" type="number" min="1" max="12" step="1" value="${state.intervalHours}">
+            <span>h</span>
+          </label>
+          <div class="small-muted">${visibleRows.length} tramos visibles de ${rows.length}</div>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -256,10 +278,10 @@ const ForecastUI = (() => {
   }
 
   function filteredRows(rows) {
-    if (state.selectedDay === "all") {
-      return rows;
-    }
-    return rows.filter((row) => rowDayKey(row.datetime) === state.selectedDay);
+    const scopedRows = state.selectedDay === "all"
+      ? rows
+      : rows.filter((row) => rowDayKey(row.datetime) === state.selectedDay);
+    return scopedRows.filter((row) => rowMatchesInterval(row));
   }
 
   function listForecastDays(rows) {
@@ -277,6 +299,19 @@ const ForecastUI = (() => {
       day: "2-digit",
       month: "2-digit"
     }).format(date);
+  }
+
+  function rowMatchesInterval(row) {
+    const interval = clampInterval(state.intervalHours);
+    if (interval <= 1) return true;
+    const date = new Date(row.datetime);
+    return date.getHours() % interval === 0;
+  }
+
+  function clampInterval(value) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isNaN(parsed)) return 3;
+    return Math.min(12, Math.max(1, parsed));
   }
 
   function simpleWind(row) {

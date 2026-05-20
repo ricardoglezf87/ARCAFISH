@@ -25,7 +25,7 @@ class ProviderUnavailableError(RuntimeError):
 
 
 class ForecastService:
-    provider_name = "open-meteo-combined-v5"
+    provider_name = "open-meteo-combined-v6"
 
     def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
@@ -82,8 +82,6 @@ class ForecastService:
         for index, time_value in enumerate(weather_times):
             moment = _parse_local_datetime(time_value, tz)
             if moment.date() < today_local:
-                continue
-            if moment.hour % 3 != 0:
                 continue
 
             marine_i = marine_index.get(time_value)
@@ -160,7 +158,7 @@ class ForecastService:
                 }
             )
 
-        summary = self._summary(hourly_rows)
+        summary = self._summary(hourly_rows, now_local)
         return {
             "spot": {
                 "id": spot.id,
@@ -183,7 +181,8 @@ class ForecastService:
                 "limitations": [
                     "La marea se deriva de sea_level_height_msl de Open-Meteo Marine; no sustituye tablas oficiales de mareas.",
                     "La exposicion viento-costa queda preparada para una futura capa geoespacial de costa.",
-                    "El score general ahora es un promedio ponderado de las proximas 24 horas, no solo la mejor hora.",
+                    "El score general es un promedio ponderado de las proximas 24 horas desde el momento actual.",
+                    "La tabla permite cambiar el intervalo de visualizacion sin volver a pedir datos al proveedor.",
                 ],
                 "species_profiles": list_species_profiles(),
                 "sources": [
@@ -193,7 +192,7 @@ class ForecastService:
             },
         }
 
-    def _summary(self, hourly_rows: list[dict]) -> dict:
+    def _summary(self, hourly_rows: list[dict], now_local: datetime) -> dict:
         if not hourly_rows:
             return {
                 "score": 0,
@@ -203,20 +202,20 @@ class ForecastService:
                 "species": {},
             }
 
-        first_24h = hourly_rows[:8]
-        weights = [max(0.35, 1.0 - (index * 0.08)) for index in range(len(first_24h))]
-        summary_score = _weighted_rows(first_24h, "fishing_score", weights)
+        next_24h = _rows_for_next_24h(hourly_rows, now_local)
+        current_row = _current_or_first_row(hourly_rows, now_local)
+        weights = _summary_weights(len(next_24h))
+        summary_score = _weighted_rows(next_24h, "fishing_score", weights)
         summary_category = _score_category(summary_score)
-        best = max(first_24h, key=lambda row: row["fishing_score"])
-        current_row = first_24h[0]
+        best = max(next_24h, key=lambda row: row["fishing_score"])
         alerts = list(
             dict.fromkeys(
                 alert
-                for row in first_24h
+                for row in next_24h
                 for alert in row.get("safety_alerts", [])
             )
         )
-        category_counts = Counter(row["fishing_category"] for row in first_24h)
+        category_counts = Counter(row["fishing_category"] for row in next_24h)
         dominant_category = category_counts.most_common(1)[0][0] if category_counts else best["fishing_category"]
         best_dt = datetime.fromisoformat(best["datetime"])
         recommendation = (
@@ -236,25 +235,25 @@ class ForecastService:
             "current_wind_ms": current_row["wind_speed_ms"],
             "current_wave_m": current_row["wave_height_m"],
             "safety_alerts": alerts,
-            "species": self._species_summary(first_24h, weights),
+            "species": self._species_summary(next_24h, current_row, weights),
         }
 
-    def _species_summary(self, first_24h: list[dict], weights: list[float]) -> dict:
+    def _species_summary(self, next_24h: list[dict], current_row: dict, weights: list[float]) -> dict:
         summaries: dict[str, dict] = {}
         for species in list_species_profiles():
             species_id = species["id"]
             best_row = max(
-                first_24h,
+                next_24h,
                 key=lambda row: row["species_scores"][species_id]["score"],
             )
-            score = _weighted_species_rows(first_24h, species_id, weights)
+            score = _weighted_species_rows(next_24h, species_id, weights)
             summaries[species_id] = {
                 "id": species_id,
                 "name": species["name"],
                 "description": species["description"],
                 "score": score,
                 "category": _score_category(score),
-                "current_score": first_24h[0]["species_scores"][species_id]["score"],
+                "current_score": current_row["species_scores"][species_id]["score"],
                 "best_datetime": best_row["datetime"],
                 "best_score": best_row["species_scores"][species_id]["score"],
                 "best_explanation": best_row["species_scores"][species_id]["explanation"],
@@ -283,7 +282,7 @@ class ForecastService:
     def _get_latest_cache(self, spot: FishingSpot) -> ForecastCache | None:
         statement = (
             select(ForecastCache)
-            .where(ForecastCache.spot_id == spot.id, ForecastCache.provider == self.provider_name)
+            .where(ForecastCache.spot_id == spot.id)
             .order_by(ForecastCache.created_at.desc())
             .limit(5)
         )
@@ -334,6 +333,30 @@ def _parse_local_datetime(value: str, tz: ZoneInfo) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=tz)
     return parsed.astimezone(tz)
+
+
+def _row_datetime(row: dict) -> datetime:
+    return datetime.fromisoformat(row["datetime"])
+
+
+def _rows_for_next_24h(hourly_rows: list[dict], now_local: datetime) -> list[dict]:
+    rows = [
+        row
+        for row in hourly_rows
+        if now_local <= _row_datetime(row) < now_local + timedelta(hours=24)
+    ]
+    return rows or hourly_rows[:24]
+
+
+def _current_or_first_row(hourly_rows: list[dict], now_local: datetime) -> dict:
+    for row in hourly_rows:
+        if _row_datetime(row) >= now_local:
+            return row
+    return hourly_rows[0]
+
+
+def _summary_weights(length: int) -> list[float]:
+    return [max(0.25, 1.0 - (index * 0.03)) for index in range(length)]
 
 
 def _series_value(series: dict, key: str, index: int | None) -> float | None:
