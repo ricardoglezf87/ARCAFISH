@@ -27,6 +27,18 @@ body {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 button,
 input,
 textarea {
@@ -37,7 +49,7 @@ textarea {
   min-height: 72px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   padding: 14px 22px;
   color: #f8fbfb;
@@ -55,17 +67,6 @@ textarea {
   margin: 3px 0 0;
   color: #cfe0e3;
   font-size: 0.92rem;
-}
-
-.topbar-status {
-  min-width: 90px;
-  max-width: 42vw;
-  padding: 7px 10px;
-  color: #d9f0ea;
-  border: 1px solid rgba(217, 240, 234, 0.38);
-  border-radius: 6px;
-  text-align: center;
-  font-size: 0.86rem;
 }
 
 .app-shell {
@@ -389,6 +390,24 @@ textarea {
   color: #1b6a94;
 }
 
+.leaflet-control-layers {
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(22, 35, 43, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(22, 35, 43, 0.12);
+  font-size: 0.84rem;
+}
+
+.leaflet-control-layers-base {
+  display: grid;
+  gap: 6px;
+}
+
+.leaflet-control-layers-selector {
+  margin-right: 6px;
+}
+
 .map-hint {
   position: absolute;
   left: 16px;
@@ -429,11 +448,108 @@ textarea {
   background: var(--great);
 }
 
+.spot-marker-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wind-chip {
+  min-width: 54px;
+  padding: 4px 7px;
+  color: #12303f;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(22, 35, 43, 0.12);
+  border-radius: 999px;
+  box-shadow: 0 4px 10px rgba(22, 35, 43, 0.14);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+}
+
+.spot-wind {
+  margin-top: 4px;
+  color: #1b6a94;
+  font-weight: 700;
+}
+
 .forecast-panel {
   min-height: 0;
   padding: 18px;
   border-top: 1px solid var(--line);
   overflow: auto;
+}
+
+.forecast-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+}
+
+.forecast-main {
+  min-width: 0;
+}
+
+.species-panel {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.species-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.species-section h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.species-list {
+  display: grid;
+  gap: 8px;
+}
+
+.species-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 10px 11px;
+  color: var(--ink);
+  background: #fbfdfc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: left;
+}
+
+.species-card.active {
+  border-color: #1b6a94;
+  box-shadow: var(--shadow);
+}
+
+.species-card-name {
+  font-weight: 800;
+}
+
+.species-card-score {
+  min-width: 50px;
+  padding: 5px 8px;
+  color: white;
+  border-radius: 6px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.species-card-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .forecast-empty {
@@ -449,6 +565,12 @@ textarea {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 14px;
+}
+
+.forecast-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .summary-grid {
@@ -471,6 +593,12 @@ textarea {
 .score-value {
   font-size: 2.4rem;
   font-weight: 900;
+}
+
+.score-eyebrow {
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .score-label {
@@ -506,6 +634,13 @@ textarea {
 
 .summary-copy p {
   margin: 0 0 10px;
+}
+
+.summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .alert-list {
@@ -628,17 +763,16 @@ tr:last-child td {
   .workspace {
     grid-template-rows: 52vh auto;
   }
+
+  .forecast-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
   .topbar {
     align-items: start;
     flex-direction: column;
-  }
-
-  .topbar-status {
-    width: 100%;
-    max-width: 100%;
   }
 
   .summary-grid {

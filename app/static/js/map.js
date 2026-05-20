@@ -4,16 +4,35 @@ const MapApp = (() => {
     map: null,
     spots: [],
     markers: new Map(),
+    markerMeta: new Map(),
     selectedSpotId: null,
     pendingMarker: null
   };
 
   function init() {
     state.map = L.map("map", { zoomControl: true }).setView(config.mapCenter, config.mapZoom);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+
+    const streetLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: "&copy; OpenStreetMap"
-    }).addTo(state.map);
+    });
+    const satelliteLayer = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 19,
+        attribution: "Tiles &copy; Esri"
+      }
+    );
+
+    streetLayer.addTo(state.map);
+    L.control.layers(
+      {
+        Callejero: streetLayer,
+        Satelite: satelliteLayer
+      },
+      {},
+      { position: "topleft" }
+    ).addTo(state.map);
 
     state.map.on("click", (event) => openSpotForm(event.latlng));
     document.getElementById("spot-form").addEventListener("submit", saveSpot);
@@ -26,7 +45,7 @@ const MapApp = (() => {
     setStatus("Cargando puntos");
     const response = await fetch("/api/spots");
     if (!response.ok) {
-      setStatus("Error");
+      setStatus("Error al cargar puntos");
       return;
     }
     state.spots = await response.json();
@@ -55,8 +74,16 @@ const MapApp = (() => {
       const meta = document.createElement("div");
       meta.className = "spot-meta";
       meta.textContent = `${spot.latitude.toFixed(4)}, ${spot.longitude.toFixed(4)}`;
-
       main.append(button, meta);
+
+      const markerMeta = state.markerMeta.get(spot.id);
+      if (markerMeta?.windMs !== undefined) {
+        const wind = document.createElement("div");
+        wind.className = "spot-meta spot-wind";
+        wind.textContent = `Viento prox. 3 h: ${markerMeta.windMs.toFixed(1)} m/s`;
+        main.appendChild(wind);
+      }
+
       if (spot.notes) {
         const notes = document.createElement("div");
         notes.className = "spot-meta";
@@ -81,38 +108,55 @@ const MapApp = (() => {
 
     for (const spot of state.spots) {
       const marker = L.marker([spot.latitude, spot.longitude], {
-        icon: markerIcon("neutral")
+        icon: markerIcon(state.markerMeta.get(spot.id))
       }).addTo(state.map);
-      marker.bindTooltip(spot.name);
+      marker.bindTooltip(buildTooltip(spot.id, spot.name), { direction: "top" });
       marker.on("click", () => selectSpot(spot.id));
       state.markers.set(spot.id, marker);
     }
   }
 
-  function markerIcon(quality) {
+  function markerIcon(meta) {
+    const quality = meta?.quality || "neutral";
+    const windLabel = Number.isFinite(meta?.windMs) ? `<div class="wind-chip">${meta.windMs.toFixed(1)} m/s</div>` : "";
     return L.divIcon({
       className: "",
-      html: `<div class="spot-marker ${quality}"></div>`,
-      iconSize: [20, 20],
-      iconAnchor: [10, 10]
+      html: `<div class="spot-marker-wrap"><div class="spot-marker ${quality}"></div>${windLabel}</div>`,
+      iconSize: [82, 28],
+      iconAnchor: [14, 14]
     });
   }
 
-  function setMarkerQuality(spotId, category) {
+  function buildTooltip(spotId, name) {
+    const meta = state.markerMeta.get(spotId);
+    const wind = Number.isFinite(meta?.windMs) ? ` · ${meta.windMs.toFixed(1)} m/s` : "";
+    return `${name}${wind}`;
+  }
+
+  function setMarkerForecast(spotId, forecast) {
+    state.markerMeta.set(spotId, {
+      quality: ForecastUI.qualityClass(forecast.summary.category),
+      windMs: forecast.summary.current_wind_ms
+    });
+
     const marker = state.markers.get(spotId);
-    if (!marker) return;
-    marker.setIcon(markerIcon(ForecastUI.qualityClass(category)));
+    const spot = state.spots.find((item) => item.id === spotId);
+    if (marker && spot) {
+      marker.setIcon(markerIcon(state.markerMeta.get(spotId)));
+      marker.setTooltipContent(buildTooltip(spotId, spot.name));
+    }
+    renderSpotList();
   }
 
   function openSpotForm(latlng) {
     if (!insideBounds(latlng.lat, latlng.lng)) {
-      setStatus("Fuera de Canarias");
+      setStatus("Fuera del ambito inicial de Canarias");
       return;
     }
     if (state.pendingMarker) {
       state.pendingMarker.remove();
     }
-    state.pendingMarker = L.marker(latlng, { icon: markerIcon("neutral") }).addTo(state.map);
+    state.pendingMarker = L.marker(latlng, { icon: markerIcon() }).addTo(state.map);
     document.getElementById("spot-lat").value = latlng.lat;
     document.getElementById("spot-lon").value = latlng.lng;
     document.getElementById("form-coordinates").textContent = `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
@@ -138,7 +182,7 @@ const MapApp = (() => {
       notes: document.getElementById("spot-notes").value || null
     };
 
-    setStatus("Guardando");
+    setStatus("Guardando punto");
     const response = await fetch("/api/spots", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -146,7 +190,7 @@ const MapApp = (() => {
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "No se pudo guardar." }));
-      setStatus(error.detail || "Error");
+      setStatus(error.detail || "Error al guardar");
       return;
     }
     const spot = await response.json();
@@ -162,21 +206,22 @@ const MapApp = (() => {
     if (spot) {
       state.map.setView([spot.latitude, spot.longitude], Math.max(state.map.getZoom(), 12));
     }
-    setStatus("Calculando");
+    setStatus("Calculando pronostico");
     const forecast = await ForecastUI.loadForecast(spotId);
     if (forecast?.summary) {
-      setMarkerQuality(spotId, forecast.summary.category);
+      setMarkerForecast(spotId, forecast);
     }
     setStatus("Listo");
   }
 
   async function deleteSpot(spotId) {
-    setStatus("Eliminando");
+    setStatus("Eliminando punto");
     const response = await fetch(`/api/spots/${spotId}`, { method: "DELETE" });
     if (!response.ok) {
-      setStatus("Error");
+      setStatus("Error al eliminar");
       return;
     }
+    state.markerMeta.delete(spotId);
     if (state.selectedSpotId === spotId) {
       state.selectedSpotId = null;
       ForecastUI.clear();
@@ -190,11 +235,13 @@ const MapApp = (() => {
   }
 
   function setStatus(text) {
-    document.getElementById("app-status").textContent = text;
+    const element = document.getElementById("app-status");
+    if (element) {
+      element.textContent = text;
+    }
   }
 
   return { init, loadSpots };
 })();
 
 document.addEventListener("DOMContentLoaded", MapApp.init);
-

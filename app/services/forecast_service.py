@@ -10,7 +10,11 @@ from app.config import Settings, get_settings
 from app.database import utcnow
 from app.models import FishingSpot, ForecastCache
 from app.services.astronomy_provider import LocalAstronomyProvider
-from app.services.fishing_score import FishingConditions, calculate_fishing_score
+from app.services.fishing_score import (
+    FishingConditions,
+    calculate_fishing_score,
+    list_species_profiles,
+)
 from app.services.marine_provider import OpenMeteoMarineProvider
 from app.services.tide_provider import DerivedTideProvider
 from app.services.weather_provider import OpenMeteoWeatherProvider
@@ -21,7 +25,7 @@ class ProviderUnavailableError(RuntimeError):
 
 
 class ForecastService:
-    provider_name = "open-meteo-combined-v1"
+    provider_name = "open-meteo-combined-v2"
 
     def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
@@ -99,6 +103,7 @@ class ForecastService:
                 wind_gust_ms=_series_value(weather_hourly, "wind_gusts_10m", index),
                 wind_direction_deg=_series_value(weather_hourly, "wind_direction_10m", index),
                 temperature_c=_series_value(weather_hourly, "temperature_2m", index),
+                sea_surface_temperature_c=_series_value(marine_hourly, "sea_surface_temperature", marine_i),
                 precipitation_mm=_series_value(weather_hourly, "precipitation", index),
                 precipitation_probability=_series_value(weather_hourly, "precipitation_probability", index),
                 pressure_hpa=pressure,
@@ -115,7 +120,11 @@ class ForecastService:
                 is_day=None if is_day_value is None else bool(is_day_value),
                 weather_description=weather_code_description(weather_code),
             )
-            score = calculate_fishing_score(conditions)
+            general_score = calculate_fishing_score(conditions, "general")
+            species_scores = {
+                species["id"]: _serialize_score(calculate_fishing_score(conditions, species["id"]))
+                for species in list_species_profiles()
+            }
             hourly_rows.append(
                 {
                     "datetime": moment.isoformat(),
@@ -133,18 +142,20 @@ class ForecastService:
                     "wave_height_m": _round(conditions.wave_height_m, 1),
                     "wave_period_s": _round(conditions.wave_period_s, 0),
                     "wave_direction_deg": _round(conditions.wave_direction_deg, 0),
-                    "sea_surface_temperature_c": _round(_series_value(marine_hourly, "sea_surface_temperature", marine_i), 1),
+                    "sea_surface_temperature_c": _round(conditions.sea_surface_temperature_c, 1),
                     "tide_state": conditions.tide_state or "sin datos",
                     "tide_height_m": _round(conditions.tide_height_m, 2),
                     "moon_phase": conditions.moon_phase,
                     "sunrise": astro.sunrise.isoformat() if astro else None,
                     "sunset": astro.sunset.isoformat() if astro else None,
-                    "fishing_score": score.score,
-                    "fishing_category": score.category,
-                    "explanation": score.explanation,
-                    "safety_alerts": score.safety_alerts,
-                    "confidence": score.confidence,
-                    "missing_fields": score.missing_fields,
+                    "fishing_score": general_score.score,
+                    "fishing_category": general_score.category,
+                    "explanation": general_score.explanation,
+                    "safety_alerts": general_score.safety_alerts,
+                    "confidence": general_score.confidence,
+                    "missing_fields": general_score.missing_fields,
+                    "factor_scores": general_score.factor_scores,
+                    "species_scores": species_scores,
                 }
             )
 
@@ -171,7 +182,9 @@ class ForecastService:
                 "limitations": [
                     "La marea se deriva de sea_level_height_msl de Open-Meteo Marine; no sustituye tablas oficiales de mareas.",
                     "La exposicion viento-costa queda preparada para una futura capa geoespacial de costa.",
+                    "El score general ahora es un promedio ponderado de las proximas 24 horas, no solo la mejor hora.",
                 ],
+                "species_profiles": list_species_profiles(),
                 "sources": [
                     "https://open-meteo.com/en/docs",
                     "https://open-meteo.com/en/docs/marine-weather-api",
@@ -186,10 +199,15 @@ class ForecastService:
                 "category": "Mala",
                 "recommendation": "No hay datos horarios suficientes para calcular una ventana de pesca.",
                 "safety_alerts": ["Pronostico incompleto."],
+                "species": {},
             }
 
-        best = max(hourly_rows, key=lambda row: row["fishing_score"])
         first_24h = hourly_rows[:8]
+        weights = [max(0.35, 1.0 - (index * 0.08)) for index in range(len(first_24h))]
+        summary_score = _weighted_rows(first_24h, "fishing_score", weights)
+        summary_category = _score_category(summary_score)
+        best = max(first_24h, key=lambda row: row["fishing_score"])
+        current_row = first_24h[0]
         alerts = list(
             dict.fromkeys(
                 alert
@@ -201,18 +219,50 @@ class ForecastService:
         dominant_category = category_counts.most_common(1)[0][0] if category_counts else best["fishing_category"]
         best_dt = datetime.fromisoformat(best["datetime"])
         recommendation = (
-            f"Mejor ventana detectada: {best_dt.strftime('%d/%m %H:%M')} "
-            f"con condiciones {best['fishing_category'].lower()}s."
+            f"Base de calculo: proximas 24 h desde {datetime.fromisoformat(current_row['datetime']).strftime('%d/%m %H:%M')}. "
+            f"Mejor ventana: {best_dt.strftime('%d/%m %H:%M')}."
         )
         return {
-            "score": best["fishing_score"],
-            "category": best["fishing_category"],
+            "score": summary_score,
+            "category": summary_category,
             "dominant_next_24h": dominant_category,
             "recommendation": recommendation,
             "best_datetime": best["datetime"],
             "best_explanation": best["explanation"],
+            "best_score": best["fishing_score"],
+            "current_datetime": current_row["datetime"],
+            "current_score": current_row["fishing_score"],
+            "current_wind_ms": current_row["wind_speed_ms"],
+            "current_wave_m": current_row["wave_height_m"],
             "safety_alerts": alerts,
+            "species": self._species_summary(first_24h, weights),
         }
+
+    def _species_summary(self, first_24h: list[dict], weights: list[float]) -> dict:
+        summaries: dict[str, dict] = {}
+        for species in list_species_profiles():
+            species_id = species["id"]
+            best_row = max(
+                first_24h,
+                key=lambda row: row["species_scores"][species_id]["score"],
+            )
+            score = _weighted_species_rows(first_24h, species_id, weights)
+            summaries[species_id] = {
+                "id": species_id,
+                "name": species["name"],
+                "description": species["description"],
+                "score": score,
+                "category": _score_category(score),
+                "current_score": first_24h[0]["species_scores"][species_id]["score"],
+                "best_datetime": best_row["datetime"],
+                "best_score": best_row["species_scores"][species_id]["score"],
+                "best_explanation": best_row["species_scores"][species_id]["explanation"],
+                "recommendation": (
+                    f"Ventana mas favorable: "
+                    f"{datetime.fromisoformat(best_row['datetime']).strftime('%d/%m %H:%M')}."
+                ),
+            }
+        return summaries
 
     def _get_valid_cache(self, spot: FishingSpot) -> ForecastCache | None:
         now = utcnow()
@@ -325,3 +375,42 @@ def weather_code_description(code: float | None) -> str:
         99: "Tormenta fuerte",
     }
     return descriptions.get(int(code), "Variable")
+
+
+def _serialize_score(score) -> dict:  # noqa: ANN001
+    return {
+        "species_id": score.species_id,
+        "species_name": score.species_name,
+        "score": score.score,
+        "category": score.category,
+        "explanation": score.explanation,
+        "safety_alerts": score.safety_alerts,
+        "confidence": score.confidence,
+        "missing_fields": score.missing_fields,
+        "factor_scores": score.factor_scores,
+    }
+
+
+def _score_category(score: int) -> str:
+    if score <= 39:
+        return "Mala"
+    if score <= 59:
+        return "Regular"
+    if score <= 79:
+        return "Buena"
+    return "Muy buena"
+
+
+def _weighted_rows(rows: list[dict], key: str, weights: list[float]) -> int:
+    total_weight = sum(weights) or 1.0
+    weighted = sum(row[key] * weight for row, weight in zip(rows, weights, strict=False))
+    return int(round(weighted / total_weight))
+
+
+def _weighted_species_rows(rows: list[dict], species_id: str, weights: list[float]) -> int:
+    total_weight = sum(weights) or 1.0
+    weighted = sum(
+        row["species_scores"][species_id]["score"] * weight
+        for row, weight in zip(rows, weights, strict=False)
+    )
+    return int(round(weighted / total_weight))
