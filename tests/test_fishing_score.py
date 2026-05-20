@@ -99,3 +99,17 @@ def test_dorado_prefers_warmer_daylight_conditions():
     )
 
     assert warm_day.score > cool_night.score
+
+
+def test_seasonality_penalizes_dorado_in_winter_against_summer():
+    january = calculate_fishing_score(
+        base_conditions(datetime=datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc), sea_surface_temperature_c=25.5),
+        "dorado",
+    )
+    august = calculate_fishing_score(
+        base_conditions(datetime=datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc), sea_surface_temperature_c=25.5),
+        "dorado",
+    )
+
+    assert january.seasonality_factor < august.seasonality_factor
+    assert january.score < august.score

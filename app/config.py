@@ -39,7 +39,7 @@ def get_settings() -> Settings:
         environment=_env("ENVIRONMENT", "local"),
         database_url=_env("DATABASE_URL", "sqlite:///./arcafish.db"),
         canary_timezone=_env("CANARY_TIMEZONE", "Atlantic/Canary"),
-        forecast_days=_env_int("FORECAST_DAYS", 3, minimum=1, maximum=8),
+        forecast_days=_env_int("FORECAST_DAYS", 7, minimum=1, maximum=8),
         forecast_cache_ttl_minutes=_env_int("FORECAST_CACHE_TTL_MINUTES", 60, minimum=5),
         http_timeout_seconds=_env_float("HTTP_TIMEOUT_SECONDS", 12.0, minimum=1.0),
         http_verify_ssl=_env_bool("HTTP_VERIFY_SSL", True),

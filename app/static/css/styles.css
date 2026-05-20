@@ -69,6 +69,13 @@ textarea {
   font-size: 0.92rem;
 }
 
+.topbar-button {
+  margin-left: auto;
+  color: #f8fbfb;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
 .app-shell {
   height: calc(100vh - 72px);
   display: grid;
@@ -227,9 +234,17 @@ textarea {
   grid-template-rows: minmax(360px, 52vh) minmax(0, 1fr);
 }
 
+.workspace.map-hidden {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .map-section {
   position: relative;
   min-height: 320px;
+}
+
+.map-section.is-hidden {
+  display: none;
 }
 
 #map {
@@ -451,27 +466,6 @@ textarea {
 .spot-marker-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-
-.wind-chip {
-  min-width: 54px;
-  padding: 4px 7px;
-  color: #12303f;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(22, 35, 43, 0.12);
-  border-radius: 999px;
-  box-shadow: 0 4px 10px rgba(22, 35, 43, 0.14);
-  font-size: 0.72rem;
-  font-weight: 800;
-  line-height: 1;
-  text-align: center;
-}
-
-.spot-wind {
-  margin-top: 4px;
-  color: #1b6a94;
-  font-weight: 700;
 }
 
 .forecast-panel {

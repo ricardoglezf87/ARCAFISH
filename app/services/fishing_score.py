@@ -48,6 +48,7 @@ class SpeciesProfile:
     water_temp_range: tuple[float, float] | None
     light_preferences: dict[str, float]
     tide_preferences: dict[str, float]
+    seasonality_by_month: dict[int, float]
     cloud_mode: str = "moderate"
     notes: str = ""
 
@@ -63,6 +64,7 @@ class FishingScoreResult:
     confidence: str
     missing_fields: list[str]
     factor_scores: dict[str, float]
+    seasonality_factor: float
 
 
 GENERAL_WEIGHTS = {
@@ -93,6 +95,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(19.0, 24.0),
         light_preferences={"dawn": 1.0, "dusk": 1.0, "night": 0.65, "day": 0.55, "midday": 0.42},
         tide_preferences={"subiendo": 1.0, "bajando": 0.8, "pleamar": 0.55, "bajamar": 0.45, "estable": 0.35},
+        seasonality_by_month={month: 1.0 for month in range(1, 13)},
         cloud_mode="moderate",
         notes="Promedia mejor las proximas 24 horas que una sola ventana ideal.",
     ),
@@ -106,6 +109,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(24.0, 29.5),
         light_preferences={"dawn": 0.85, "dusk": 0.85, "night": 0.1, "day": 1.0, "midday": 0.92},
         tide_preferences={"subiendo": 0.9, "bajando": 0.7, "pleamar": 0.55, "bajamar": 0.4, "estable": 0.45},
+        seasonality_by_month={1: 0.0, 2: 0.0, 3: 0.1, 4: 0.3, 5: 0.6, 6: 0.8, 7: 1.0, 8: 1.0, 9: 1.0, 10: 0.7, 11: 0.4, 12: 0.1},
         cloud_mode="clear_day",
     ),
     "medregal": SpeciesProfile(
@@ -118,6 +122,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(20.0, 25.5),
         light_preferences={"dawn": 0.95, "dusk": 0.95, "night": 0.3, "day": 0.88, "midday": 0.75},
         tide_preferences={"subiendo": 1.0, "bajando": 0.85, "pleamar": 0.6, "bajamar": 0.45, "estable": 0.4},
+        seasonality_by_month={1: 0.5, 2: 0.6, 3: 0.7, 4: 0.8, 5: 0.9, 6: 1.0, 7: 1.0, 8: 0.9, 9: 0.7, 10: 0.6, 11: 0.5, 12: 0.5},
         cloud_mode="moderate",
     ),
     "bicuda": SpeciesProfile(
@@ -130,6 +135,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(20.0, 25.5),
         light_preferences={"dawn": 1.0, "dusk": 1.0, "night": 0.25, "day": 0.7, "midday": 0.4},
         tide_preferences={"subiendo": 1.0, "bajando": 0.75, "pleamar": 0.55, "bajamar": 0.45, "estable": 0.35},
+        seasonality_by_month={1: 1.0, 2: 1.0, 3: 0.8, 4: 0.5, 5: 0.3, 6: 0.2, 7: 0.2, 8: 0.3, 9: 0.5, 10: 0.8, 11: 1.0, 12: 1.0},
         cloud_mode="moderate",
     ),
     "bocinegro_sama": SpeciesProfile(
@@ -142,6 +148,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(18.0, 23.5),
         light_preferences={"dawn": 0.85, "dusk": 1.0, "night": 1.0, "day": 0.35, "midday": 0.15},
         tide_preferences={"subiendo": 0.8, "bajando": 0.75, "pleamar": 0.65, "bajamar": 0.55, "estable": 0.4},
+        seasonality_by_month={1: 0.8, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2, 6: 0.1, 7: 0.0, 8: 0.0, 9: 0.1, 10: 0.3, 11: 0.6, 12: 0.8},
         cloud_mode="low_light",
     ),
     "vieja_pejeverde": SpeciesProfile(
@@ -154,6 +161,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(18.0, 24.0),
         light_preferences={"dawn": 0.7, "dusk": 0.85, "night": 0.45, "day": 0.82, "midday": 0.88},
         tide_preferences={"subiendo": 0.75, "bajando": 0.7, "pleamar": 0.6, "bajamar": 0.55, "estable": 0.55},
+        seasonality_by_month={1: 0.1, 2: 0.1, 3: 0.2, 4: 0.4, 5: 0.6, 6: 0.8, 7: 0.9, 8: 1.0, 9: 1.0, 10: 0.8, 11: 0.4, 12: 0.2},
         cloud_mode="moderate",
     ),
     "sargo_chopa_roncador": SpeciesProfile(
@@ -166,6 +174,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(18.0, 23.5),
         light_preferences={"dawn": 1.0, "dusk": 1.0, "night": 0.7, "day": 0.45, "midday": 0.25},
         tide_preferences={"subiendo": 0.95, "bajando": 0.8, "pleamar": 0.6, "bajamar": 0.5, "estable": 0.35},
+        seasonality_by_month={1: 1.0, 2: 1.0, 3: 0.9, 4: 0.7, 5: 0.4, 6: 0.2, 7: 0.1, 8: 0.1, 9: 0.2, 10: 0.5, 11: 0.8, 12: 1.0},
         cloud_mode="low_light",
     ),
     "jurel_palometa_boga": SpeciesProfile(
@@ -178,6 +187,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(19.0, 24.5),
         light_preferences={"dawn": 0.9, "dusk": 0.9, "night": 0.3, "day": 0.9, "midday": 0.7},
         tide_preferences={"subiendo": 0.95, "bajando": 0.8, "pleamar": 0.55, "bajamar": 0.45, "estable": 0.4},
+        seasonality_by_month={1: 0.9, 2: 0.9, 3: 0.8, 4: 0.6, 5: 0.4, 6: 0.2, 7: 0.1, 8: 0.1, 9: 0.3, 10: 0.6, 11: 0.8, 12: 0.9},
         cloud_mode="moderate",
     ),
     "burro_fula": SpeciesProfile(
@@ -190,6 +200,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(18.0, 24.0),
         light_preferences={"dawn": 0.8, "dusk": 0.8, "night": 0.4, "day": 0.85, "midday": 0.75},
         tide_preferences={"subiendo": 0.75, "bajando": 0.7, "pleamar": 0.55, "bajamar": 0.5, "estable": 0.55},
+        seasonality_by_month={1: 0.1, 2: 0.1, 3: 0.2, 4: 0.4, 5: 0.7, 6: 0.9, 7: 1.0, 8: 1.0, 9: 0.8, 10: 0.5, 11: 0.2, 12: 0.1},
         cloud_mode="moderate",
     ),
     "catalufa": SpeciesProfile(
@@ -202,6 +213,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(18.0, 24.0),
         light_preferences={"dawn": 0.5, "dusk": 0.9, "night": 1.0, "day": 0.08, "midday": 0.03},
         tide_preferences={"subiendo": 0.8, "bajando": 0.75, "pleamar": 0.7, "bajamar": 0.5, "estable": 0.4},
+        seasonality_by_month={1: 0.3, 2: 0.3, 3: 0.4, 4: 0.6, 5: 0.8, 6: 0.9, 7: 1.0, 8: 1.0, 9: 0.7, 10: 0.5, 11: 0.3, 12: 0.3},
         cloud_mode="low_light",
     ),
     "pulpo": SpeciesProfile(
@@ -214,6 +226,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
         water_temp_range=(17.0, 23.5),
         light_preferences={"dawn": 0.75, "dusk": 1.0, "night": 1.0, "day": 0.2, "midday": 0.05},
         tide_preferences={"subiendo": 0.65, "bajando": 0.95, "pleamar": 0.7, "bajamar": 0.45, "estable": 0.4},
+        seasonality_by_month={1: 0.2, 2: 0.2, 3: 0.3, 4: 0.5, 5: 0.7, 6: 0.8, 7: 0.9, 8: 1.0, 9: 1.0, 10: 0.9, 11: 0.6, 12: 0.4},
         cloud_mode="low_light",
     ),
 }
@@ -247,7 +260,10 @@ def calculate_fishing_score(
     confidence_multiplier = _confidence_multiplier(missing_fields)
     weighted_score = _weighted_average(factor_scores, profile.weights)
     base_score = 100 / (1 + exp(-7.5 * (weighted_score - 0.72)))
-    final_score = int(round(max(0, min(100, base_score * safety_multiplier * confidence_multiplier))))
+    seasonality_factor = _seasonality_factor(conditions.datetime.month, profile)
+    final_score = int(
+        round(max(0, min(100, base_score * seasonality_factor * safety_multiplier * confidence_multiplier)))
+    )
 
     if safety_multiplier <= 0.45:
         final_score = min(final_score, 39)
@@ -259,6 +275,7 @@ def calculate_fishing_score(
     explanation = _build_explanation(
         factor_scores=factor_scores,
         profile=profile,
+        month=conditions.datetime.month,
         safety_alerts=safety_alerts,
         confidence=confidence,
     )
@@ -273,6 +290,7 @@ def calculate_fishing_score(
         confidence=confidence,
         missing_fields=sorted(set(missing_fields)),
         factor_scores={key: round(value, 3) for key, value in factor_scores.items()},
+        seasonality_factor=round(seasonality_factor, 2),
     )
 
 
@@ -294,6 +312,7 @@ def list_species_profiles() -> list[dict]:
             "name": SPECIES_PROFILES[species_id].name,
             "description": SPECIES_PROFILES[species_id].description,
             "notes": SPECIES_PROFILES[species_id].notes,
+            "seasonality_by_month": SPECIES_PROFILES[species_id].seasonality_by_month,
         }
         for species_id in ordered_ids
     ]
@@ -523,6 +542,7 @@ def _confidence_label(missing_fields: Iterable[str]) -> str:
 def _build_explanation(
     factor_scores: dict[str, float],
     profile: SpeciesProfile,
+    month: int,
     safety_alerts: list[str],
     confidence: str,
 ) -> str:
@@ -546,6 +566,12 @@ def _build_explanation(
 
     if safety_alerts:
         parts.append("Alerta: " + safety_alerts[0])
+
+    seasonality = _seasonality_factor(month, profile)
+    if seasonality <= 0.35 and profile.id != "general":
+        parts.append("Es mes flojo para esta especie.")
+    elif seasonality >= 0.85 and profile.id != "general":
+        parts.append("La estacionalidad acompana.")
 
     if confidence != "alta":
         parts.append(f"Confianza {confidence} por datos incompletos.")
@@ -585,3 +611,7 @@ def _trapezoid(value: float, hard_low: float, ideal_low: float, ideal_high: floa
     if value < ideal_low:
         return (value - hard_low) / (ideal_low - hard_low)
     return 1.0 - ((value - ideal_high) / (hard_high - ideal_high))
+
+
+def _seasonality_factor(month: int, profile: SpeciesProfile) -> float:
+    return profile.seasonality_by_month.get(int(month), 0.5)

@@ -6,7 +6,8 @@ const MapApp = (() => {
     markers: new Map(),
     markerMeta: new Map(),
     selectedSpotId: null,
-    pendingMarker: null
+    pendingMarker: null,
+    mapVisible: false
   };
 
   function init() {
@@ -38,6 +39,7 @@ const MapApp = (() => {
     document.getElementById("spot-form").addEventListener("submit", saveSpot);
     document.getElementById("cancel-spot").addEventListener("click", closeSpotForm);
     document.getElementById("refresh-spots").addEventListener("click", loadSpots);
+    document.getElementById("toggle-map").addEventListener("click", toggleMapVisibility);
     loadSpots();
   }
 
@@ -76,14 +78,6 @@ const MapApp = (() => {
       meta.textContent = `${spot.latitude.toFixed(4)}, ${spot.longitude.toFixed(4)}`;
       main.append(button, meta);
 
-      const markerMeta = state.markerMeta.get(spot.id);
-      if (markerMeta?.windMs !== undefined) {
-        const wind = document.createElement("div");
-        wind.className = "spot-meta spot-wind";
-        wind.textContent = `Viento prox. 3 h: ${markerMeta.windMs.toFixed(1)} m/s`;
-        main.appendChild(wind);
-      }
-
       if (spot.notes) {
         const notes = document.createElement("div");
         notes.className = "spot-meta";
@@ -118,25 +112,21 @@ const MapApp = (() => {
 
   function markerIcon(meta) {
     const quality = meta?.quality || "neutral";
-    const windLabel = Number.isFinite(meta?.windMs) ? `<div class="wind-chip">${meta.windMs.toFixed(1)} m/s</div>` : "";
     return L.divIcon({
       className: "",
-      html: `<div class="spot-marker-wrap"><div class="spot-marker ${quality}"></div>${windLabel}</div>`,
-      iconSize: [82, 28],
-      iconAnchor: [14, 14]
+      html: `<div class="spot-marker-wrap"><div class="spot-marker ${quality}"></div></div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
     });
   }
 
   function buildTooltip(spotId, name) {
-    const meta = state.markerMeta.get(spotId);
-    const wind = Number.isFinite(meta?.windMs) ? ` · ${meta.windMs.toFixed(1)} m/s` : "";
-    return `${name}${wind}`;
+    return name;
   }
 
   function setMarkerForecast(spotId, forecast) {
     state.markerMeta.set(spotId, {
-      quality: ForecastUI.qualityClass(forecast.summary.category),
-      windMs: forecast.summary.current_wind_ms
+      quality: ForecastUI.qualityClass(forecast.summary.category)
     });
 
     const marker = state.markers.get(spotId);
@@ -238,6 +228,19 @@ const MapApp = (() => {
     const element = document.getElementById("app-status");
     if (element) {
       element.textContent = text;
+    }
+  }
+
+  function toggleMapVisibility() {
+    state.mapVisible = !state.mapVisible;
+    const section = document.getElementById("map-section");
+    const workspace = document.querySelector(".workspace");
+    const button = document.getElementById("toggle-map");
+    section.classList.toggle("is-hidden", !state.mapVisible);
+    workspace.classList.toggle("map-hidden", !state.mapVisible);
+    button.textContent = state.mapVisible ? "Ocultar mapa" : "Mostrar mapa";
+    if (state.mapVisible) {
+      setTimeout(() => state.map.invalidateSize(), 50);
     }
   }
 

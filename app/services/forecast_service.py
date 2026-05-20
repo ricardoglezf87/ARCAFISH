@@ -25,7 +25,7 @@ class ProviderUnavailableError(RuntimeError):
 
 
 class ForecastService:
-    provider_name = "open-meteo-combined-v2"
+    provider_name = "open-meteo-combined-v3"
 
     def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
@@ -257,6 +257,7 @@ class ForecastService:
                 "best_datetime": best_row["datetime"],
                 "best_score": best_row["species_scores"][species_id]["score"],
                 "best_explanation": best_row["species_scores"][species_id]["explanation"],
+                "seasonality_factor": best_row["species_scores"][species_id]["seasonality_factor"],
                 "recommendation": (
                     f"Ventana mas favorable: "
                     f"{datetime.fromisoformat(best_row['datetime']).strftime('%d/%m %H:%M')}."
@@ -388,6 +389,7 @@ def _serialize_score(score) -> dict:  # noqa: ANN001
         "confidence": score.confidence,
         "missing_fields": score.missing_fields,
         "factor_scores": score.factor_scores,
+        "seasonality_factor": score.seasonality_factor,
     }
 
 

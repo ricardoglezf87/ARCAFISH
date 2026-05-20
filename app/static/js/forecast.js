@@ -14,11 +14,10 @@ const ForecastUI = (() => {
         const error = await response.json().catch(() => ({ detail: "No se pudo obtener el pronostico." }));
         throw new Error(error.detail || "No se pudo obtener el pronostico.");
       }
-      const forecast = await response.json();
-      state.forecast = forecast;
+      state.forecast = await response.json();
       state.selectedSpecies = "general";
       renderForecast();
-      return forecast;
+      return state.forecast;
     } catch (error) {
       panel.innerHTML = `<div class="forecast-error">${escapeHtml(error.message)}</div>`;
       return null;
@@ -42,6 +41,7 @@ const ForecastUI = (() => {
       clear();
       return;
     }
+
     const forecast = state.forecast;
     const summary = currentSummary();
     const quality = qualityClass(summary.category);
@@ -58,7 +58,7 @@ const ForecastUI = (() => {
             <div>
               <h2>${escapeHtml(forecast.spot.name)}</h2>
               <div class="small-muted">${forecast.spot.latitude.toFixed(4)}, ${forecast.spot.longitude.toFixed(4)}</div>
-              <div class="small-muted">Base del indice: proximas 24 h desde ${formatDateTime(forecast.summary.current_datetime)}</div>
+              <div class="small-muted">Prediccion cargada: ${forecast.meta.forecast_days} dias · Base del indice: proximas 24 h</div>
             </div>
             <div class="forecast-badges">${cached}<span class="quality-badge ${quality}">${escapeHtml(summary.category)}</span></div>
           </div>
@@ -75,6 +75,7 @@ const ForecastUI = (() => {
               <div class="summary-stats">
                 <span class="meta-pill">Ahora ${forecast.summary.current_score}</span>
                 <span class="meta-pill">Mejor ventana ${summary.best_score ?? summary.score}</span>
+                ${renderSeasonalityPill(summary)}
               </div>
               <div class="alert-list">${alerts}</div>
             </div>
@@ -115,7 +116,7 @@ const ForecastUI = (() => {
         <button class="species-card ${state.selectedSpecies === profile.id ? "active" : ""}" data-species-id="${escapeHtml(profile.id)}">
           <span class="species-card-name">${escapeHtml(profile.name)}</span>
           <span class="species-card-score ${quality}">${speciesSummary.score}</span>
-          <span class="species-card-meta">${escapeHtml(speciesSummary.category)}</span>
+          <span class="species-card-meta">${escapeHtml(speciesSummary.category)} · mes ${Math.round((speciesSummary.seasonality_factor || 0) * 100)}%</span>
         </button>
       `;
     }).join("");
@@ -185,7 +186,7 @@ const ForecastUI = (() => {
     const quality = qualityClass(scoreBlock.category);
     const wind = `${value(row.wind_speed_ms, "m/s")} · ${compass(row.wind_direction_deg)}<br><span class="small-muted">Racha ${value(row.wind_gust_ms, "m/s")}</span>`;
     const rain = `${value(row.precipitation_mm, "mm")}<br><span class="small-muted">${value(row.precipitation_probability, "%")}</span>`;
-    const mar = `${value(row.wave_height_m, "m")} · ${value(row.wave_period_s, "s")}<br><span class="small-muted">Agua ${value(row.sea_surface_temperature_c, "°C")}</span>`;
+    const sea = `${value(row.wave_height_m, "m")} · ${value(row.wave_period_s, "s")}<br><span class="small-muted">Agua ${value(row.sea_surface_temperature_c, "°C")}</span>`;
     const tide = `${escapeHtml(row.tide_state || "sin datos")}<br><span class="small-muted">${value(row.tide_height_m, "m")}</span>`;
     const pressure = `${value(row.pressure_hpa, "hPa")}${row.pressure_trend_hpa === null ? "" : ` (${row.pressure_trend_hpa > 0 ? "+" : ""}${row.pressure_trend_hpa})`}`;
 
@@ -197,10 +198,10 @@ const ForecastUI = (() => {
         <td>${wind}</td>
         <td>${rain}</td>
         <td>${value(row.temperature_c, "°C")}</td>
-        <td>${mar}</td>
+        <td>${sea}</td>
         <td>${tide}</td>
         <td>${escapeHtml(row.moon_phase || "sin datos")}</td>
-        <td>${escapeHtml(scoreBlock.explanation || "")}</td>
+        <td>${escapeHtml(humanReading(row, scoreBlock))}</td>
       </tr>
     `;
   }
@@ -210,10 +211,58 @@ const ForecastUI = (() => {
       return {
         score: row.fishing_score,
         category: row.fishing_category,
-        explanation: row.explanation
+        explanation: row.explanation,
+        seasonality_factor: 1
       };
     }
     return row.species_scores[state.selectedSpecies];
+  }
+
+  function humanReading(row, scoreBlock) {
+    const parts = [];
+    parts.push(row.weather_description || "Tiempo variable");
+    parts.push(simpleWind(row));
+    parts.push(simpleSea(row));
+    parts.push(simpleRain(row));
+    parts.push(simpleTide(row));
+    if (scoreBlock?.explanation) {
+      parts.push(scoreBlock.explanation);
+    }
+    return `${parts.filter(Boolean).join(". ")}.`;
+  }
+
+  function simpleWind(row) {
+    if (row.wind_speed_ms === null || row.wind_speed_ms === undefined) return "Sin dato claro de viento";
+    if (row.wind_speed_ms >= 11) return `Viento fuerte del ${compassShort(row.wind_direction_deg)}`;
+    if (row.wind_speed_ms >= 7) return `Viento moderado tirando a vivo del ${compassShort(row.wind_direction_deg)}`;
+    if (row.wind_speed_ms >= 3) return `Viento moderado del ${compassShort(row.wind_direction_deg)}`;
+    return `Viento flojo del ${compassShort(row.wind_direction_deg)}`;
+  }
+
+  function simpleSea(row) {
+    if (row.wave_height_m === null || row.wave_height_m === undefined) return "Mar sin dato suficiente";
+    if (row.wave_height_m >= 2.5) return `Mar muy dura con olas de ${row.wave_height_m} m`;
+    if (row.wave_height_m >= 1.8) return `Mar movida con olas de ${row.wave_height_m} m`;
+    if (row.wave_height_m >= 0.8) return `Mar manejable con olas de ${row.wave_height_m} m`;
+    return `Mar bastante calmada con olas de ${row.wave_height_m} m`;
+  }
+
+  function simpleRain(row) {
+    if (row.precipitation_mm === null || row.precipitation_mm === undefined) return "";
+    if (row.precipitation_mm >= 4) return "Lluvia intensa prevista";
+    if (row.precipitation_mm >= 1.5) return "Algo de lluvia";
+    if (row.precipitation_mm > 0) return "Posible lluvia debil";
+    return "Sin lluvia prevista";
+  }
+
+  function simpleTide(row) {
+    if (!row.tide_state || row.tide_state === "sin datos") return "";
+    return `Marea ${row.tide_state}`;
+  }
+
+  function renderSeasonalityPill(summary) {
+    if (state.selectedSpecies === "general" || summary.seasonality_factor === undefined) return "";
+    return `<span class="meta-pill">Mes ${Math.round(summary.seasonality_factor * 100)}%</span>`;
   }
 
   function qualityClass(category) {
@@ -244,6 +293,12 @@ const ForecastUI = (() => {
     if (degrees === null || degrees === undefined || Number.isNaN(degrees)) return "s/d";
     const directions = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"];
     return `${directions[Math.round(degrees / 45) % 8]} ${Math.round(degrees)}°`;
+  }
+
+  function compassShort(degrees) {
+    if (degrees === null || degrees === undefined || Number.isNaN(degrees)) return "direccion desconocida";
+    const directions = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"];
+    return directions[Math.round(degrees / 45) % 8];
   }
 
   function escapeHtml(value) {

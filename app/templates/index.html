@@ -6,6 +6,7 @@
     <h1>ARCAFISH</h1>
     <p>Pronostico de pesca desde costa - Islas Canarias</p>
   </div>
+  <button class="ghost-button topbar-button" id="toggle-map" type="button">Mostrar mapa</button>
 </header>
 
 <p class="sr-only" id="app-status" aria-live="polite">Listo</p>
@@ -35,8 +36,8 @@
     <p class="empty-state" id="spots-empty">Sin puntos guardados.</p>
   </aside>
 
-  <main class="workspace">
-    <section class="map-section" aria-label="Mapa de puntos de pesca">
+  <main class="workspace map-hidden">
+    <section class="map-section is-hidden" id="map-section" aria-label="Mapa de puntos de pesca">
       <div id="map"></div>
       <div class="map-hint" id="map-hint">
         Clic en la costa para guardar un punto. Cambia a satelite para buscar pesqueros con mas detalle.
