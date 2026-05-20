@@ -25,7 +25,7 @@ class ProviderUnavailableError(RuntimeError):
 
 
 class ForecastService:
-    provider_name = "open-meteo-combined-v4"
+    provider_name = "open-meteo-combined-v5"
 
     def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
@@ -76,11 +76,12 @@ class ForecastService:
         dates = {_parse_local_datetime(time_value, tz).date() for time_value in weather_times}
         astronomy = self.astronomy_provider.get_days(spot.latitude, spot.longitude, dates)
         now_local = datetime.now(tz)
+        today_local = now_local.date()
 
         hourly_rows: list[dict] = []
         for index, time_value in enumerate(weather_times):
             moment = _parse_local_datetime(time_value, tz)
-            if moment < now_local - timedelta(hours=1):
+            if moment.date() < today_local:
                 continue
             if moment.hour % 3 != 0:
                 continue
