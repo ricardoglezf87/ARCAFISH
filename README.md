@@ -2,6 +2,8 @@
 
 ARCAFISH es una aplicacion web en Python para estimar ventanas de pesca desde costa en Canarias. Permite guardar puntos, consultar una prediccion de hasta 7 dias, ver un score general de pesca y comparar scores por especie con ajuste estacional por mes.
 
+Tambien permite exportar a PDF la vista actual del pronostico o todas las especies para el dia o semana que tengas seleccionado.
+
 ## Stack
 
 - FastAPI + Jinja2
@@ -29,6 +31,14 @@ uvicorn app.main:app --reload
 Abre `http://127.0.0.1:8000`.
 
 En Windows tambien puedes ejecutar `run_arcafish.bat`. El script crea `.venv` si hace falta, instala dependencias, crea `.env` desde `.env.example`, abre el navegador y arranca el servidor.
+
+## Uso rapido
+
+1. Guarda o selecciona un punto.
+2. Ajusta el dia desde las pestanas de la tabla.
+3. Cambia el intervalo horario a 1 h, 3 h, 6 h o el valor que prefieras.
+4. Selecciona una especie concreta o deja `General costa`.
+5. Exporta `PDF vista actual` o `PDF todas las especies`.
 
 ## Variables de entorno
 

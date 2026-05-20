@@ -700,6 +700,12 @@ textarea {
   gap: 12px;
 }
 
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .interval-control {
   display: inline-flex;
   align-items: center;
@@ -842,5 +848,9 @@ tr:last-child td {
   .table-tools {
     align-items: start;
     flex-direction: column;
+  }
+
+  .export-actions {
+    width: 100%;
   }
 }

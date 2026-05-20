@@ -110,6 +110,7 @@ const ForecastUI = (() => {
     bindSpeciesButtons();
     bindDayButtons();
     bindIntervalControl();
+    bindExportButtons();
   }
 
   function renderSpeciesCards(forecast) {
@@ -158,6 +159,14 @@ const ForecastUI = (() => {
     input.addEventListener("blur", updateInterval);
   }
 
+  function bindExportButtons() {
+    for (const button of document.querySelectorAll("[data-export-scope]")) {
+      button.addEventListener("click", () => {
+        downloadPdf(button.dataset.exportScope || "selected");
+      });
+    }
+  }
+
   function currentSummary() {
     if (state.selectedSpecies === "general") {
       return state.forecast.summary;
@@ -193,6 +202,10 @@ const ForecastUI = (() => {
             <input id="interval-hours" type="number" min="1" max="12" step="1" value="${state.intervalHours}">
             <span>h</span>
           </label>
+          <div class="export-actions">
+            <button class="ghost-button" type="button" data-export-scope="selected">PDF vista actual</button>
+            <button class="ghost-button" type="button" data-export-scope="all">PDF todas las especies</button>
+          </div>
           <div class="small-muted">${visibleRows.length} tramos visibles de ${rows.length}</div>
         </div>
       </div>
@@ -312,6 +325,24 @@ const ForecastUI = (() => {
     const parsed = Number.parseInt(value, 10);
     if (Number.isNaN(parsed)) return 3;
     return Math.min(12, Math.max(1, parsed));
+  }
+
+  function downloadPdf(scope) {
+    if (!state.forecast?.spot?.id) return;
+    const params = new URLSearchParams({
+      day: state.selectedDay,
+      species_scope: scope,
+      species_id: state.selectedSpecies,
+      interval_hours: String(clampInterval(state.intervalHours))
+    });
+    const url = `/api/spots/${state.forecast.spot.id}/forecast/export?${params.toString()}`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   function simpleWind(row) {
