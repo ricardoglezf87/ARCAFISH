@@ -678,6 +678,37 @@ textarea {
   border-radius: 8px;
 }
 
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 14px 0 10px;
+}
+
+.day-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.day-tab {
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.day-tab.active {
+  color: white;
+  background: #1b6a94;
+  border-color: #1b6a94;
+}
+
 table {
   width: 100%;
   min-width: 980px;
@@ -774,6 +805,11 @@ tr:last-child td {
   }
 
   .forecast-title {
+    flex-direction: column;
+  }
+
+  .table-toolbar {
+    align-items: start;
     flex-direction: column;
   }
 }

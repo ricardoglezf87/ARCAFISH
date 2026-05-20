@@ -556,13 +556,17 @@ def _build_explanation(
     negatives.sort(key=lambda item: item[1])
 
     parts: list[str] = []
-    if positives:
-        parts.append("Suman " + ", ".join(FACTOR_LABELS[item[0]] for item in positives[:3]) + ".")
+    if positives and negatives:
+        parts.append(
+            f"Balance mixto: ayudan {FACTOR_LABELS[positives[0][0]]} y {FACTOR_LABELS[positives[1][0]] if len(positives) > 1 else FACTOR_LABELS[positives[0][0]]}, "
+            f"pero penalizan {FACTOR_LABELS[negatives[0][0]]}."
+        )
+    elif positives:
+        parts.append("Tramo favorable con mar y condiciones bastante ordenadas.")
+    elif negatives:
+        parts.append("Tramo flojo por condiciones poco comodas para pescar desde costa.")
     else:
-        parts.append("No aparecen apoyos claros en los factores principales.")
-
-    if negatives:
-        parts.append("Restan " + ", ".join(FACTOR_LABELS[item[0]] for item in negatives[:3]) + ".")
+        parts.append("Condiciones sin una ventaja clara.")
 
     if safety_alerts:
         parts.append("Alerta: " + safety_alerts[0])

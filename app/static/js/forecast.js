@@ -2,7 +2,8 @@ const ForecastUI = (() => {
   const panelId = "forecast-panel";
   const state = {
     forecast: null,
-    selectedSpecies: "general"
+    selectedSpecies: "general",
+    selectedDay: "all"
   };
 
   async function loadForecast(spotId) {
@@ -16,6 +17,7 @@ const ForecastUI = (() => {
       }
       state.forecast = await response.json();
       state.selectedSpecies = "general";
+      state.selectedDay = "all";
       renderForecast();
       return state.forecast;
     } catch (error) {
@@ -27,6 +29,7 @@ const ForecastUI = (() => {
   function clear() {
     state.forecast = null;
     state.selectedSpecies = "general";
+    state.selectedDay = "all";
     const panel = document.getElementById(panelId);
     panel.innerHTML = `
       <div class="forecast-empty">
@@ -58,7 +61,7 @@ const ForecastUI = (() => {
             <div>
               <h2>${escapeHtml(forecast.spot.name)}</h2>
               <div class="small-muted">${forecast.spot.latitude.toFixed(4)}, ${forecast.spot.longitude.toFixed(4)}</div>
-              <div class="small-muted">Prediccion cargada: ${forecast.meta.forecast_days} dias · Base del indice: proximas 24 h</div>
+              <div class="small-muted">Prediccion cargada: ${forecast.meta.forecast_days} dias - Base del indice: proximas 24 h</div>
             </div>
             <div class="forecast-badges">${cached}<span class="quality-badge ${quality}">${escapeHtml(summary.category)}</span></div>
           </div>
@@ -71,7 +74,6 @@ const ForecastUI = (() => {
             </div>
             <div class="summary-copy">
               <p><strong>${escapeHtml(summary.recommendation)}</strong></p>
-              <p>${escapeHtml(summary.best_explanation || "")}</p>
               <div class="summary-stats">
                 <span class="meta-pill">Ahora ${forecast.summary.current_score}</span>
                 <span class="meta-pill">Mejor ventana ${summary.best_score ?? summary.score}</span>
@@ -105,6 +107,7 @@ const ForecastUI = (() => {
     `;
 
     bindSpeciesButtons();
+    bindDayButtons();
   }
 
   function renderSpeciesCards(forecast) {
@@ -116,7 +119,7 @@ const ForecastUI = (() => {
         <button class="species-card ${state.selectedSpecies === profile.id ? "active" : ""}" data-species-id="${escapeHtml(profile.id)}">
           <span class="species-card-name">${escapeHtml(profile.name)}</span>
           <span class="species-card-score ${quality}">${speciesSummary.score}</span>
-          <span class="species-card-meta">${escapeHtml(speciesSummary.category)} · mes ${Math.round((speciesSummary.seasonality_factor || 0) * 100)}%</span>
+          <span class="species-card-meta">${escapeHtml(speciesSummary.category)} - mes ${Math.round((speciesSummary.seasonality_factor || 0) * 100)}%</span>
         </button>
       `;
     }).join("");
@@ -126,6 +129,15 @@ const ForecastUI = (() => {
     for (const button of document.querySelectorAll("[data-species-id]")) {
       button.addEventListener("click", () => {
         state.selectedSpecies = button.dataset.speciesId || "general";
+        renderForecast();
+      });
+    }
+  }
+
+  function bindDayButtons() {
+    for (const button of document.querySelectorAll("[data-day-key]")) {
+      button.addEventListener("click", () => {
+        state.selectedDay = button.dataset.dayKey || "all";
         renderForecast();
       });
     }
@@ -156,7 +168,12 @@ const ForecastUI = (() => {
     if (!rows.length) {
       return `<div class="forecast-error">No hay datos horarios suficientes.</div>`;
     }
+    const visibleRows = filteredRows(rows);
     return `
+      <div class="table-toolbar">
+        <div class="day-tabs">${renderDayTabs(rows)}</div>
+        <div class="small-muted">${visibleRows.length} tramos visibles de ${rows.length}</div>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -174,19 +191,31 @@ const ForecastUI = (() => {
             </tr>
           </thead>
           <tbody>
-            ${rows.map(renderRow).join("")}
+            ${visibleRows.map(renderRow).join("")}
           </tbody>
         </table>
       </div>
     `;
   }
 
+  function renderDayTabs(rows) {
+    const tabs = [{ key: "all", label: "Toda la semana" }];
+    for (const day of listForecastDays(rows)) {
+      tabs.push({ key: day, label: formatDayLabel(day) });
+    }
+    return tabs.map((tab) => `
+      <button class="day-tab ${state.selectedDay === tab.key ? "active" : ""}" type="button" data-day-key="${tab.key}">
+        ${escapeHtml(tab.label)}
+      </button>
+    `).join("");
+  }
+
   function renderRow(row) {
     const scoreBlock = getRowScore(row);
     const quality = qualityClass(scoreBlock.category);
-    const wind = `${value(row.wind_speed_ms, "m/s")} · ${compass(row.wind_direction_deg)}<br><span class="small-muted">Racha ${value(row.wind_gust_ms, "m/s")}</span>`;
+    const wind = `${value(row.wind_speed_ms, "m/s")} - ${compass(row.wind_direction_deg)}<br><span class="small-muted">Racha ${value(row.wind_gust_ms, "m/s")}</span>`;
     const rain = `${value(row.precipitation_mm, "mm")}<br><span class="small-muted">${value(row.precipitation_probability, "%")}</span>`;
-    const sea = `${value(row.wave_height_m, "m")} · ${value(row.wave_period_s, "s")}<br><span class="small-muted">Agua ${value(row.sea_surface_temperature_c, "°C")}</span>`;
+    const sea = `${value(row.wave_height_m, "m")} - ${value(row.wave_period_s, "s")}<br><span class="small-muted">Agua ${value(row.sea_surface_temperature_c, "C")}</span>`;
     const tide = `${escapeHtml(row.tide_state || "sin datos")}<br><span class="small-muted">${value(row.tide_height_m, "m")}</span>`;
     const pressure = `${value(row.pressure_hpa, "hPa")}${row.pressure_trend_hpa === null ? "" : ` (${row.pressure_trend_hpa > 0 ? "+" : ""}${row.pressure_trend_hpa})`}`;
 
@@ -197,11 +226,11 @@ const ForecastUI = (() => {
         <td><span class="hour-score ${quality}">${scoreBlock.score}</span></td>
         <td>${wind}</td>
         <td>${rain}</td>
-        <td>${value(row.temperature_c, "°C")}</td>
+        <td>${value(row.temperature_c, "C")}</td>
         <td>${sea}</td>
         <td>${tide}</td>
         <td>${escapeHtml(row.moon_phase || "sin datos")}</td>
-        <td>${escapeHtml(humanReading(row, scoreBlock))}</td>
+        <td>${escapeHtml(humanReading(row))}</td>
       </tr>
     `;
   }
@@ -210,25 +239,44 @@ const ForecastUI = (() => {
     if (state.selectedSpecies === "general") {
       return {
         score: row.fishing_score,
-        category: row.fishing_category,
-        explanation: row.explanation,
-        seasonality_factor: 1
+        category: row.fishing_category
       };
     }
     return row.species_scores[state.selectedSpecies];
   }
 
-  function humanReading(row, scoreBlock) {
+  function humanReading(row) {
     const parts = [];
     parts.push(row.weather_description || "Tiempo variable");
     parts.push(simpleWind(row));
     parts.push(simpleSea(row));
     parts.push(simpleRain(row));
     parts.push(simpleTide(row));
-    if (scoreBlock?.explanation) {
-      parts.push(scoreBlock.explanation);
-    }
     return `${parts.filter(Boolean).join(". ")}.`;
+  }
+
+  function filteredRows(rows) {
+    if (state.selectedDay === "all") {
+      return rows;
+    }
+    return rows.filter((row) => rowDayKey(row.datetime) === state.selectedDay);
+  }
+
+  function listForecastDays(rows) {
+    return [...new Set(rows.map((row) => rowDayKey(row.datetime)))];
+  }
+
+  function rowDayKey(value) {
+    return String(value || "").slice(0, 10);
+  }
+
+  function formatDayLabel(value) {
+    const date = new Date(`${value}T00:00:00`);
+    return new Intl.DateTimeFormat("es-ES", {
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit"
+    }).format(date);
   }
 
   function simpleWind(row) {
@@ -292,7 +340,7 @@ const ForecastUI = (() => {
   function compass(degrees) {
     if (degrees === null || degrees === undefined || Number.isNaN(degrees)) return "s/d";
     const directions = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"];
-    return `${directions[Math.round(degrees / 45) % 8]} ${Math.round(degrees)}°`;
+    return `${directions[Math.round(degrees / 45) % 8]} ${Math.round(degrees)} deg`;
   }
 
   function compassShort(degrees) {

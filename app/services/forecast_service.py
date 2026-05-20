@@ -25,7 +25,7 @@ class ProviderUnavailableError(RuntimeError):
 
 
 class ForecastService:
-    provider_name = "open-meteo-combined-v3"
+    provider_name = "open-meteo-combined-v4"
 
     def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
@@ -294,14 +294,21 @@ class ForecastService:
                 return cache
         return None
 
-    @staticmethod
-    def _cache_matches_spot(cache: ForecastCache, spot: FishingSpot) -> bool:
+    def _cache_matches_spot(self, cache: ForecastCache, spot: FishingSpot) -> bool:
         cached_spot = (cache.raw_data or {}).get("spot") or {}
+        cached_meta = (cache.raw_data or {}).get("meta") or {}
         try:
             cached_latitude = float(cached_spot.get("latitude"))
             cached_longitude = float(cached_spot.get("longitude"))
         except (TypeError, ValueError):
             return False
+        cached_days = cached_meta.get("forecast_days")
+        if cached_days is not None:
+            try:
+                if int(cached_days) != int(self.settings.forecast_days):
+                    return False
+            except (TypeError, ValueError):
+                return False
         return (
             abs(cached_latitude - float(spot.latitude)) < 0.000001
             and abs(cached_longitude - float(spot.longitude)) < 0.000001
