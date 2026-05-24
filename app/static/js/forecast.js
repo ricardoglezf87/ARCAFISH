@@ -2,23 +2,35 @@ const ForecastUI = (() => {
   const panelId = "forecast-panel";
   const state = {
     forecast: null,
+    spotId: null,
     selectedSpecies: "general",
     selectedDay: "all",
-    intervalHours: 3
+    intervalHours: 3,
+    fishingContext: {
+      fishingMethod: "float",
+      castingDistanceM: 20,
+      spotType: "rocky",
+      shoreType: "volcanic",
+      spotExposure: "semi_exposed",
+      waterDepthEstimateM: ""
+    }
   };
 
-  async function loadForecast(spotId) {
+  async function loadForecast(spotId, options = {}) {
+    state.spotId = spotId;
     const panel = document.getElementById(panelId);
     panel.innerHTML = `<div class="forecast-empty"><h2>Pronostico</h2><p>Cargando prevision...</p></div>`;
     try {
-      const response = await fetch(`/api/spots/${spotId}/forecast`);
+      const response = await fetch(`/api/spots/${spotId}/forecast?${forecastQueryParams().toString()}`);
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: "No se pudo obtener el pronostico." }));
         throw new Error(error.detail || "No se pudo obtener el pronostico.");
       }
       state.forecast = await response.json();
-      state.selectedSpecies = "general";
-      state.selectedDay = "all";
+      if (!options.preserveView) {
+        state.selectedSpecies = "general";
+        state.selectedDay = "all";
+      }
       renderForecast();
       return state.forecast;
     } catch (error) {
@@ -29,6 +41,7 @@ const ForecastUI = (() => {
 
   function clear() {
     state.forecast = null;
+    state.spotId = null;
     state.selectedSpecies = "general";
     state.selectedDay = "all";
     const panel = document.getElementById(panelId);
@@ -67,6 +80,8 @@ const ForecastUI = (() => {
             <div class="forecast-badges">${cached}<span class="quality-badge ${quality}">${escapeHtml(summary.category)}</span></div>
           </div>
 
+          ${renderFishingContextControls(forecast)}
+
           <div class="summary-grid">
             <div class="score-tile ${quality}">
               <div class="score-eyebrow">${escapeHtml(summaryLabel())}</div>
@@ -75,6 +90,7 @@ const ForecastUI = (() => {
             </div>
             <div class="summary-copy">
               <p><strong>${escapeHtml(summary.recommendation)}</strong></p>
+              ${summary.best_explanation ? `<p class="summary-detail">${escapeHtml(summary.best_explanation)}</p>` : ""}
               <div class="summary-stats">
                 <span class="meta-pill">Ahora ${forecast.summary.current_score}</span>
                 <span class="meta-pill">Mejor ventana ${summary.best_score ?? summary.score}</span>
@@ -108,6 +124,7 @@ const ForecastUI = (() => {
     `;
 
     bindSpeciesButtons();
+    bindFishingContextControls();
     bindDayButtons();
     bindIntervalControl();
     bindExportButtons();
@@ -126,6 +143,132 @@ const ForecastUI = (() => {
         </button>
       `;
     }).join("");
+  }
+
+  function renderFishingContextControls(forecast) {
+    const context = forecast.fishing_context || forecast.meta?.fishing_context || {};
+    const distance = Number(context.casting_distance_m ?? state.fishingContext.castingDistanceM);
+    return `
+      <section class="fishing-context-panel" aria-label="Contexto de pesca">
+        <div class="fishing-context-grid">
+          <label class="field-control" for="fishing-method">
+            <span>Modalidad</span>
+            <select id="fishing-method">
+              ${option("float", "Boya", state.fishingContext.fishingMethod)}
+              ${option("bottom", "Fondo", state.fishingContext.fishingMethod)}
+              ${option("spinning", "Spinning", state.fishingContext.fishingMethod)}
+              ${option("lure_trolling_like", "Senuelo con avance", state.fishingContext.fishingMethod)}
+            </select>
+          </label>
+
+          <label class="field-control distance-field" for="casting-distance">
+            <span>Distancia de lance desde costa</span>
+            <div class="distance-inputs">
+              <input id="casting-distance" type="range" min="0" max="150" step="1" value="${distance}">
+              <input id="casting-distance-number" type="number" min="0" max="200" step="1" value="${distance}">
+              <span>m</span>
+            </div>
+          </label>
+
+          <label class="field-control" for="shore-type">
+            <span>Tipo de costa</span>
+            <select id="shore-type">
+              ${option("volcanic", "Volcanica", state.fishingContext.shoreType)}
+              ${option("beach", "Playa", state.fishingContext.shoreType)}
+              ${option("pier", "Espigon", state.fishingContext.shoreType)}
+              ${option("cliff", "Acantilado", state.fishingContext.shoreType)}
+            </select>
+          </label>
+
+          <label class="field-control" for="spot-type">
+            <span>Fondo / estructura</span>
+            <select id="spot-type">
+              ${option("rocky", "Roca", state.fishingContext.spotType)}
+              ${option("mixed", "Mixto", state.fishingContext.spotType)}
+              ${option("sandy", "Arena", state.fishingContext.spotType)}
+              ${option("reef", "Arrecife", state.fishingContext.spotType)}
+              ${option("harbor", "Puerto", state.fishingContext.spotType)}
+            </select>
+          </label>
+
+          <label class="field-control" for="spot-exposure">
+            <span>Exposicion</span>
+            <select id="spot-exposure">
+              ${option("sheltered", "Resguardado", state.fishingContext.spotExposure)}
+              ${option("semi_exposed", "Semi expuesto", state.fishingContext.spotExposure)}
+              ${option("exposed", "Expuesto", state.fishingContext.spotExposure)}
+            </select>
+          </label>
+
+          <label class="field-control" for="water-depth">
+            <span>Profundidad estimada</span>
+            <input id="water-depth" type="number" min="0" max="200" step="1" placeholder="Opcional" value="${escapeHtml(state.fishingContext.waterDepthEstimateM)}">
+          </label>
+        </div>
+
+        <div class="context-reading">
+          <p>${escapeHtml(context.interpretation || fishingContextMessage())}</p>
+          <div class="summary-stats">
+            <span class="meta-pill">Zona ${escapeHtml(context.target_zone_label || "s/d")}</span>
+            <span class="meta-pill">Columna ${escapeHtml(waterColumnLabel(context.water_column))}</span>
+            <span class="meta-pill">Lance ${escapeHtml(String(context.casting_distance_m ?? distance))} m</span>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function bindFishingContextControls() {
+    const method = document.getElementById("fishing-method");
+    const distance = document.getElementById("casting-distance");
+    const distanceNumber = document.getElementById("casting-distance-number");
+    const shore = document.getElementById("shore-type");
+    const spot = document.getElementById("spot-type");
+    const exposure = document.getElementById("spot-exposure");
+    const depth = document.getElementById("water-depth");
+    if (!method || !distance || !distanceNumber || !shore || !spot || !exposure || !depth) return;
+
+    const reload = () => reloadForecastWithContext();
+    method.addEventListener("change", () => {
+      state.fishingContext.fishingMethod = method.value;
+      applyMethodDistanceDefault(method.value);
+      reload();
+    });
+    shore.addEventListener("change", () => {
+      state.fishingContext.shoreType = shore.value;
+      reload();
+    });
+    spot.addEventListener("change", () => {
+      state.fishingContext.spotType = spot.value;
+      reload();
+    });
+    exposure.addEventListener("change", () => {
+      state.fishingContext.spotExposure = exposure.value;
+      reload();
+    });
+    depth.addEventListener("change", () => {
+      state.fishingContext.waterDepthEstimateM = depth.value;
+      reload();
+    });
+    distance.addEventListener("input", () => {
+      distanceNumber.value = distance.value;
+    });
+    distance.addEventListener("change", () => {
+      state.fishingContext.castingDistanceM = clampDistance(distance.value);
+      reload();
+    });
+    distanceNumber.addEventListener("change", () => {
+      const nextDistance = clampDistance(distanceNumber.value);
+      state.fishingContext.castingDistanceM = nextDistance;
+      distance.value = String(Math.min(150, nextDistance));
+      distanceNumber.value = String(nextDistance);
+      reload();
+    });
+  }
+
+  function reloadForecastWithContext() {
+    if (!state.spotId) return;
+    loadForecast(state.spotId, { preserveView: true });
   }
 
   function bindSpeciesButtons() {
@@ -165,6 +308,57 @@ const ForecastUI = (() => {
         downloadPdf(button.dataset.exportScope || "selected");
       });
     }
+  }
+
+  function forecastQueryParams() {
+    const params = new URLSearchParams({
+      fishing_method: state.fishingContext.fishingMethod,
+      casting_distance_m: String(state.fishingContext.castingDistanceM),
+      spot_type: state.fishingContext.spotType,
+      shore_type: state.fishingContext.shoreType,
+      spot_exposure: state.fishingContext.spotExposure
+    });
+    if (state.fishingContext.waterDepthEstimateM !== "") {
+      params.set("water_depth_estimate_m", String(state.fishingContext.waterDepthEstimateM));
+    }
+    return params;
+  }
+
+  function option(value, label, selectedValue) {
+    return `<option value="${escapeHtml(value)}"${value === selectedValue ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  }
+
+  function applyMethodDistanceDefault(method) {
+    const current = Number(state.fishingContext.castingDistanceM);
+    if (method === "float" && (current > 30 || current < 0)) {
+      state.fishingContext.castingDistanceM = 20;
+    } else if (method === "bottom" && current < 50) {
+      state.fishingContext.castingDistanceM = 80;
+    } else if (method === "spinning" && current > 80) {
+      state.fishingContext.castingDistanceM = 35;
+    } else if (method === "lure_trolling_like" && current < 20) {
+      state.fishingContext.castingDistanceM = 50;
+    }
+  }
+
+  function clampDistance(value) {
+    const parsed = Number.parseFloat(value);
+    if (Number.isNaN(parsed)) return 20;
+    return Math.min(200, Math.max(0, Math.round(parsed)));
+  }
+
+  function fishingContextMessage() {
+    if (state.fishingContext.fishingMethod === "bottom") {
+      return "Estas pescando a fondo. Los lances largos favorecen especies de zonas exteriores y dependen mas de marea, corriente, fondo y profundidad estimada.";
+    }
+    return "Estas pescando cerca de costa. La distancia de lance se mide desde la orilla, no como profundidad.";
+  }
+
+  function waterColumnLabel(value) {
+    if (value === "surface") return "superficie";
+    if (value === "mid_water") return "media agua";
+    if (value === "bottom") return "fondo";
+    return "s/d";
   }
 
   function currentSummary() {
@@ -255,6 +449,9 @@ const ForecastUI = (() => {
     const tide = `${escapeHtml(row.tide_state || "sin datos")}<br><span class="small-muted">${value(row.tide_height_m, "m")}</span>`;
     const pressure = `${value(row.pressure_hpa, "hPa")}${row.pressure_trend_hpa === null ? "" : ` (${row.pressure_trend_hpa > 0 ? "+" : ""}${row.pressure_trend_hpa})`}`;
     const currentBadge = isCurrent ? `<span class="current-row-pill">Ahora</span> ` : "";
+    const reading = state.selectedSpecies === "general"
+      ? humanReading(row)
+      : (scoreBlock.explanation || humanReading(row));
 
     return `
       <tr class="${isCurrent ? "current-forecast-row" : ""}"${isCurrent ? ` aria-current="time"` : ""}>
@@ -267,7 +464,7 @@ const ForecastUI = (() => {
         <td>${sea}</td>
         <td>${tide}</td>
         <td>${escapeHtml(row.moon_phase || "sin datos")}</td>
-        <td>${escapeHtml(humanReading(row))}</td>
+        <td>${escapeHtml(reading)}</td>
       </tr>
     `;
   }
@@ -364,6 +561,9 @@ const ForecastUI = (() => {
       species_id: state.selectedSpecies,
       interval_hours: String(clampInterval(state.intervalHours))
     });
+    for (const [key, value] of forecastQueryParams()) {
+      params.set(key, value);
+    }
     const url = `/api/spots/${state.forecast.spot.id}/forecast/export?${params.toString()}`;
     const link = document.createElement("a");
     link.href = url;
