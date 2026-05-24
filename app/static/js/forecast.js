@@ -193,6 +193,7 @@ const ForecastUI = (() => {
       return `<div class="forecast-error">No hay datos horarios suficientes.</div>`;
     }
     const visibleRows = filteredRows(rows);
+    const currentRowDatetime = currentVisibleRowDatetime(visibleRows);
     return `
       <div class="table-toolbar">
         <div class="day-tabs">${renderDayTabs(rows)}</div>
@@ -226,7 +227,7 @@ const ForecastUI = (() => {
             </tr>
           </thead>
           <tbody>
-            ${visibleRows.map(renderRow).join("")}
+            ${visibleRows.map((row) => renderRow(row, row.datetime === currentRowDatetime)).join("")}
           </tbody>
         </table>
       </div>
@@ -245,7 +246,7 @@ const ForecastUI = (() => {
     `).join("");
   }
 
-  function renderRow(row) {
+  function renderRow(row, isCurrent = false) {
     const scoreBlock = getRowScore(row);
     const quality = qualityClass(scoreBlock.category);
     const wind = `${value(row.wind_speed_ms, "m/s")} - ${compass(row.wind_direction_deg)}<br><span class="small-muted">Racha ${value(row.wind_gust_ms, "m/s")}</span>`;
@@ -253,10 +254,11 @@ const ForecastUI = (() => {
     const sea = `${value(row.wave_height_m, "m")} - ${value(row.wave_period_s, "s")}<br><span class="small-muted">Agua ${value(row.sea_surface_temperature_c, "C")}</span>`;
     const tide = `${escapeHtml(row.tide_state || "sin datos")}<br><span class="small-muted">${value(row.tide_height_m, "m")}</span>`;
     const pressure = `${value(row.pressure_hpa, "hPa")}${row.pressure_trend_hpa === null ? "" : ` (${row.pressure_trend_hpa > 0 ? "+" : ""}${row.pressure_trend_hpa})`}`;
+    const currentBadge = isCurrent ? `<span class="current-row-pill">Ahora</span> ` : "";
 
     return `
-      <tr>
-        <td>${formatDateTime(row.datetime)}</td>
+      <tr class="${isCurrent ? "current-forecast-row" : ""}"${isCurrent ? ` aria-current="time"` : ""}>
+        <td>${currentBadge}${formatDateTime(row.datetime)}</td>
         <td>${escapeHtml(row.weather_description || "Sin datos")}<br><span class="small-muted">${pressure}</span></td>
         <td><span class="hour-score ${quality}">${scoreBlock.score}</span></td>
         <td>${wind}</td>
@@ -295,6 +297,33 @@ const ForecastUI = (() => {
       ? rows
       : rows.filter((row) => rowDayKey(row.datetime) === state.selectedDay);
     return scopedRows.filter((row) => rowMatchesInterval(row));
+  }
+
+  function currentVisibleRowDatetime(rows) {
+    if (!rows.length) return null;
+    const now = new Date();
+    if (Number.isNaN(now.getTime())) return null;
+    for (let index = 0; index < rows.length; index += 1) {
+      const rowStart = new Date(rows[index].datetime);
+      const nextStart = rows[index + 1] ? new Date(rows[index + 1].datetime) : null;
+      if (Number.isNaN(rowStart.getTime())) continue;
+      if (now < rowStart) {
+        return sameLocalDate(now, rowStart) ? rows[index].datetime : null;
+      }
+      if (!nextStart || Number.isNaN(nextStart.getTime())) {
+        continue;
+      }
+      if (now >= rowStart && now < nextStart) {
+        return rows[index].datetime;
+      }
+    }
+    return null;
+  }
+
+  function sameLocalDate(first, second) {
+    return first.getFullYear() === second.getFullYear()
+      && first.getMonth() === second.getMonth()
+      && first.getDate() === second.getDate();
   }
 
   function listForecastDays(rows) {

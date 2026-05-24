@@ -770,6 +770,32 @@ tr:last-child td {
   border-bottom: 0;
 }
 
+.current-forecast-row td {
+  background: #fff7df;
+  border-top: 2px solid #d4911f;
+  border-bottom: 2px solid #d4911f;
+}
+
+.current-forecast-row td:first-child {
+  border-left: 5px solid #d4911f;
+  color: #173247;
+  font-weight: 800;
+}
+
+.current-row-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin: 0 8px 4px 0;
+  padding: 2px 7px;
+  color: #ffffff;
+  background: #173247;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .hour-score {
   width: 48px;
   display: inline-flex;
