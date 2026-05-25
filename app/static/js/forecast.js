@@ -8,11 +8,7 @@ const ForecastUI = (() => {
     intervalHours: 3,
     fishingContext: {
       fishingMethod: "float",
-      castingDistanceM: 20,
-      spotType: "rocky",
-      shoreType: "volcanic",
-      spotExposure: "semi_exposed",
-      waterDepthEstimateM: ""
+      castingDistanceM: 20
     }
   };
 
@@ -156,8 +152,7 @@ const ForecastUI = (() => {
             <select id="fishing-method">
               ${option("float", "Boya", state.fishingContext.fishingMethod)}
               ${option("bottom", "Fondo", state.fishingContext.fishingMethod)}
-              ${option("spinning", "Spinning", state.fishingContext.fishingMethod)}
-              ${option("lure_trolling_like", "Senuelo con avance", state.fishingContext.fishingMethod)}
+              ${option("spinning", "Spinning / rockfishing", state.fishingContext.fishingMethod)}
             </select>
           </label>
 
@@ -170,40 +165,6 @@ const ForecastUI = (() => {
             </div>
           </label>
 
-          <label class="field-control" for="shore-type">
-            <span>Tipo de costa</span>
-            <select id="shore-type">
-              ${option("volcanic", "Volcanica", state.fishingContext.shoreType)}
-              ${option("beach", "Playa", state.fishingContext.shoreType)}
-              ${option("pier", "Espigon", state.fishingContext.shoreType)}
-              ${option("cliff", "Acantilado", state.fishingContext.shoreType)}
-            </select>
-          </label>
-
-          <label class="field-control" for="spot-type">
-            <span>Fondo / estructura</span>
-            <select id="spot-type">
-              ${option("rocky", "Roca", state.fishingContext.spotType)}
-              ${option("mixed", "Mixto", state.fishingContext.spotType)}
-              ${option("sandy", "Arena", state.fishingContext.spotType)}
-              ${option("reef", "Arrecife", state.fishingContext.spotType)}
-              ${option("harbor", "Puerto", state.fishingContext.spotType)}
-            </select>
-          </label>
-
-          <label class="field-control" for="spot-exposure">
-            <span>Exposicion</span>
-            <select id="spot-exposure">
-              ${option("sheltered", "Resguardado", state.fishingContext.spotExposure)}
-              ${option("semi_exposed", "Semi expuesto", state.fishingContext.spotExposure)}
-              ${option("exposed", "Expuesto", state.fishingContext.spotExposure)}
-            </select>
-          </label>
-
-          <label class="field-control" for="water-depth">
-            <span>Profundidad estimada</span>
-            <input id="water-depth" type="number" min="0" max="200" step="1" placeholder="Opcional" value="${escapeHtml(state.fishingContext.waterDepthEstimateM)}">
-          </label>
         </div>
 
         <div class="context-reading">
@@ -212,6 +173,9 @@ const ForecastUI = (() => {
             <span class="meta-pill">Zona ${escapeHtml(context.target_zone_label || "s/d")}</span>
             <span class="meta-pill">Columna ${escapeHtml(waterColumnLabel(context.water_column))}</span>
             <span class="meta-pill">Lance ${escapeHtml(String(context.casting_distance_m ?? distance))} m</span>
+            ${context.spot_type ? `<span class="meta-pill">${escapeHtml(spotTypeLabel(context.spot_type))}</span>` : ""}
+            ${context.spot_exposure ? `<span class="meta-pill">${escapeHtml(exposureLabel(context.spot_exposure))}</span>` : ""}
+            ${context.water_depth_estimate_m !== null && context.water_depth_estimate_m !== undefined ? `<span class="meta-pill">Prof. ${escapeHtml(String(context.water_depth_estimate_m))} m</span>` : ""}
           </div>
         </div>
       </section>
@@ -222,32 +186,12 @@ const ForecastUI = (() => {
     const method = document.getElementById("fishing-method");
     const distance = document.getElementById("casting-distance");
     const distanceNumber = document.getElementById("casting-distance-number");
-    const shore = document.getElementById("shore-type");
-    const spot = document.getElementById("spot-type");
-    const exposure = document.getElementById("spot-exposure");
-    const depth = document.getElementById("water-depth");
-    if (!method || !distance || !distanceNumber || !shore || !spot || !exposure || !depth) return;
+    if (!method || !distance || !distanceNumber) return;
 
     const reload = () => reloadForecastWithContext();
     method.addEventListener("change", () => {
       state.fishingContext.fishingMethod = method.value;
       applyMethodDistanceDefault(method.value);
-      reload();
-    });
-    shore.addEventListener("change", () => {
-      state.fishingContext.shoreType = shore.value;
-      reload();
-    });
-    spot.addEventListener("change", () => {
-      state.fishingContext.spotType = spot.value;
-      reload();
-    });
-    exposure.addEventListener("change", () => {
-      state.fishingContext.spotExposure = exposure.value;
-      reload();
-    });
-    depth.addEventListener("change", () => {
-      state.fishingContext.waterDepthEstimateM = depth.value;
       reload();
     });
     distance.addEventListener("input", () => {
@@ -313,14 +257,8 @@ const ForecastUI = (() => {
   function forecastQueryParams() {
     const params = new URLSearchParams({
       fishing_method: state.fishingContext.fishingMethod,
-      casting_distance_m: String(state.fishingContext.castingDistanceM),
-      spot_type: state.fishingContext.spotType,
-      shore_type: state.fishingContext.shoreType,
-      spot_exposure: state.fishingContext.spotExposure
+      casting_distance_m: String(state.fishingContext.castingDistanceM)
     });
-    if (state.fishingContext.waterDepthEstimateM !== "") {
-      params.set("water_depth_estimate_m", String(state.fishingContext.waterDepthEstimateM));
-    }
     return params;
   }
 
@@ -336,8 +274,6 @@ const ForecastUI = (() => {
       state.fishingContext.castingDistanceM = 80;
     } else if (method === "spinning" && current > 80) {
       state.fishingContext.castingDistanceM = 35;
-    } else if (method === "lure_trolling_like" && current < 20) {
-      state.fishingContext.castingDistanceM = 50;
     }
   }
 
@@ -352,6 +288,16 @@ const ForecastUI = (() => {
       return "Estas pescando a fondo. Los lances largos favorecen especies de zonas exteriores y dependen mas de marea, corriente, fondo y profundidad estimada.";
     }
     return "Estas pescando cerca de costa. La distancia de lance se mide desde la orilla, no como profundidad.";
+  }
+
+  function spotTypeLabel(value) {
+    const labels = { rocky: "Roca", mixed: "Mixto", sandy: "Arena", reef: "Arrecife", harbor: "Puerto" };
+    return labels[value] || value;
+  }
+
+  function exposureLabel(value) {
+    const labels = { sheltered: "Resguardado", semi_exposed: "Semi expuesto", exposed: "Expuesto" };
+    return labels[value] || value;
   }
 
   function waterColumnLabel(value) {

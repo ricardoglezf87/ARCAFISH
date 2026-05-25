@@ -249,7 +249,7 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
 }
 
 
-ALLOWED_FISHING_METHODS = {"float", "bottom", "spinning", "lure_trolling_like"}
+ALLOWED_FISHING_METHODS = {"float", "bottom", "spinning"}
 ALLOWED_TARGET_ZONES = {"shoreline", "shore_break", "inner_reef", "outer_reef", "deep_cast"}
 ALLOWED_WATER_COLUMNS = {"surface", "mid_water", "bottom"}
 
@@ -257,14 +257,12 @@ FISHING_METHOD_FACTORS = {
     "float": 0.9,
     "bottom": 1.0,
     "spinning": 1.0,
-    "lure_trolling_like": 1.1,
 }
 
 FISHING_METHOD_LABELS = {
     "float": "Boya",
     "bottom": "Fondo",
-    "spinning": "Spinning",
-    "lure_trolling_like": "Senuelo con avance",
+    "spinning": "Spinning / rockfishing",
 }
 
 TARGET_ZONE_LABELS = {
@@ -541,7 +539,7 @@ def fishing_context_interpretation(fishing_context: FishingContext) -> str:
         )
     if method == "spinning" and distance <= 30:
         return (
-            "Estas haciendo spinning corto en proximidad costera. "
+            "Estas haciendo spinning / rockfishing corto en proximidad costera. "
             "La primera rompiente favorece depredadores pequenos y especies de espuma, "
             "pero limita especies de lance largo."
         )
@@ -549,11 +547,6 @@ def fishing_context_interpretation(fishing_context: FishingContext) -> str:
         return (
             f"Estas pescando a fondo con lance largo, aproximadamente a {distance:.0f} m desde costa. "
             "Esta distancia favorece especies de zonas exteriores como sama, bocinegro, medregal o dorado."
-        )
-    if method == "lure_trolling_like":
-        return (
-            f"Estas trabajando un senuelo en avance a unos {distance:.0f} m desde costa, "
-            "compatible con capas de agua de superficie o media agua."
         )
     zone_label = TARGET_ZONE_LABELS.get(fishing_context.target_zone, fishing_context.target_zone)
     method_label = FISHING_METHOD_LABELS.get(method, method)
@@ -585,7 +578,7 @@ def _compute_factor_scores(
 def _default_water_column(fishing_method: str) -> str:
     if fishing_method == "bottom":
         return "bottom"
-    if fishing_method in {"spinning", "lure_trolling_like"}:
+    if fishing_method == "spinning":
         return "mid_water"
     return "surface"
 

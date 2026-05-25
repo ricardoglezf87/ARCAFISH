@@ -183,6 +183,7 @@ class ForecastService:
                 "latitude": spot.latitude,
                 "longitude": spot.longitude,
                 "notes": spot.notes,
+                "method_contexts": spot.method_contexts,
             },
             "fishing_context": fishing_context_data,
             "summary": summary,

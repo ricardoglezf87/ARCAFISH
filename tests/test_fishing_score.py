@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from app.services.fishing_score import (
+    FISHING_METHOD_LABELS,
     FishingConditions,
     build_fishing_context,
     calculate_fishing_score,
@@ -170,3 +171,8 @@ def test_bottom_long_cast_favors_outer_zone_species():
     assert long_context.target_zone == "outer_reef"
     assert long_sama.distance_factor == 1.0
     assert long_sama.score > short_sama.score
+
+
+def test_fishing_methods_are_float_bottom_and_spinning():
+    assert set(FISHING_METHOD_LABELS) == {"float", "bottom", "spinning"}
+    assert FISHING_METHOD_LABELS["spinning"] == "Spinning / rockfishing"

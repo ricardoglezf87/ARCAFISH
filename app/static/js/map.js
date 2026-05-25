@@ -1,5 +1,15 @@
 const MapApp = (() => {
   const config = window.ARCAFISH_CONFIG;
+  const methodLabels = {
+    float: "Boya",
+    bottom: "Fondo",
+    spinning: "Spinning / rockfishing"
+  };
+  const defaultMethodContexts = {
+    float: { shore_type: "volcanic", spot_type: "rocky", spot_exposure: "semi_exposed", water_depth_estimate_m: null },
+    bottom: { shore_type: "volcanic", spot_type: "rocky", spot_exposure: "semi_exposed", water_depth_estimate_m: null },
+    spinning: { shore_type: "volcanic", spot_type: "rocky", spot_exposure: "semi_exposed", water_depth_estimate_m: null }
+  };
   const state = {
     map: null,
     spots: [],
@@ -37,6 +47,7 @@ const MapApp = (() => {
 
     state.map.on("click", (event) => openSpotForm(event.latlng));
     document.getElementById("spot-form").addEventListener("submit", saveSpot);
+    document.getElementById("spot-config-form").addEventListener("submit", saveSpotConfig);
     document.getElementById("cancel-spot").addEventListener("click", closeSpotForm);
     document.getElementById("refresh-spots").addEventListener("click", loadSpots);
     document.getElementById("toggle-map").addEventListener("click", toggleMapVisibility);
@@ -52,6 +63,7 @@ const MapApp = (() => {
     }
     state.spots = await response.json();
     renderSpotList();
+    renderSpotConfigPanel();
     renderMarkers();
     setStatus("Listo");
   }
@@ -92,6 +104,55 @@ const MapApp = (() => {
       item.append(main, del);
       list.appendChild(item);
     }
+    renderSpotConfigPanel();
+  }
+
+  function renderSpotConfigPanel() {
+    const panel = document.getElementById("spot-config-panel");
+    const form = document.getElementById("spot-config-form");
+    const spot = selectedSpot();
+    if (!panel || !form) return;
+    panel.hidden = !spot;
+    if (!spot) {
+      form.innerHTML = "";
+      return;
+    }
+    const contexts = normalizedMethodContexts(spot.method_contexts);
+    form.innerHTML = `
+      ${Object.keys(methodLabels).map((method) => renderMethodContext(method, contexts[method])).join("")}
+      <button type="submit" class="primary-button">Guardar configuracion</button>
+    `;
+  }
+
+  function renderMethodContext(method, context) {
+    return `
+      <fieldset class="method-config-group">
+        <legend>${escapeHtml(methodLabels[method])}</legend>
+        <label for="shore-type-${method}">Costa</label>
+        <select id="shore-type-${method}" data-method="${method}" data-context-field="shore_type">
+          ${option("volcanic", "Volcanica", context.shore_type)}
+          ${option("beach", "Playa", context.shore_type)}
+          ${option("pier", "Espigon", context.shore_type)}
+          ${option("cliff", "Acantilado", context.shore_type)}
+        </select>
+        <label for="spot-type-${method}">Fondo</label>
+        <select id="spot-type-${method}" data-method="${method}" data-context-field="spot_type">
+          ${option("rocky", "Roca", context.spot_type)}
+          ${option("mixed", "Mixto", context.spot_type)}
+          ${option("sandy", "Arena", context.spot_type)}
+          ${option("reef", "Arrecife", context.spot_type)}
+          ${option("harbor", "Puerto", context.spot_type)}
+        </select>
+        <label for="spot-exposure-${method}">Exposicion</label>
+        <select id="spot-exposure-${method}" data-method="${method}" data-context-field="spot_exposure">
+          ${option("sheltered", "Resguardado", context.spot_exposure)}
+          ${option("semi_exposed", "Semi expuesto", context.spot_exposure)}
+          ${option("exposed", "Expuesto", context.spot_exposure)}
+        </select>
+        <label for="water-depth-${method}">Profundidad estimada</label>
+        <input id="water-depth-${method}" data-method="${method}" data-context-field="water_depth_estimate_m" type="number" min="0" max="200" step="1" placeholder="Opcional" value="${context.water_depth_estimate_m ?? ""}">
+      </fieldset>
+    `;
   }
 
   function renderMarkers() {
@@ -192,6 +253,7 @@ const MapApp = (() => {
   async function selectSpot(spotId) {
     state.selectedSpotId = spotId;
     renderSpotList();
+    renderSpotConfigPanel();
     const spot = state.spots.find((item) => item.id === spotId);
     if (spot) {
       state.map.setView([spot.latitude, spot.longitude], Math.max(state.map.getZoom(), 12));
@@ -215,6 +277,7 @@ const MapApp = (() => {
     if (state.selectedSpotId === spotId) {
       state.selectedSpotId = null;
       ForecastUI.clear();
+      renderSpotConfigPanel();
     }
     await loadSpots();
   }
@@ -229,6 +292,70 @@ const MapApp = (() => {
     if (element) {
       element.textContent = text;
     }
+  }
+
+  async function saveSpotConfig(event) {
+    event.preventDefault();
+    if (!state.selectedSpotId) return;
+    const payload = { method_contexts: readMethodContextsFromForm() };
+    setStatus("Guardando configuracion");
+    const response = await fetch(`/api/spots/${state.selectedSpotId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "No se pudo guardar la configuracion." }));
+      setStatus(error.detail || "Error al guardar configuracion");
+      return;
+    }
+    const updatedSpot = await response.json();
+    state.spots = state.spots.map((spot) => spot.id === updatedSpot.id ? updatedSpot : spot);
+    renderSpotList();
+    renderSpotConfigPanel();
+    await ForecastUI.loadForecast(state.selectedSpotId, { preserveView: true });
+    setStatus("Listo");
+  }
+
+  function readMethodContextsFromForm() {
+    const contexts = normalizedMethodContexts({});
+    for (const method of Object.keys(methodLabels)) {
+      for (const field of ["shore_type", "spot_type", "spot_exposure", "water_depth_estimate_m"]) {
+        const input = document.querySelector(`[data-method="${method}"][data-context-field="${field}"]`);
+        if (!input) continue;
+        if (field === "water_depth_estimate_m") {
+          contexts[method][field] = input.value === "" ? null : Number(input.value);
+        } else {
+          contexts[method][field] = input.value;
+        }
+      }
+    }
+    return contexts;
+  }
+
+  function normalizedMethodContexts(raw) {
+    const contexts = JSON.parse(JSON.stringify(defaultMethodContexts));
+    for (const method of Object.keys(contexts)) {
+      Object.assign(contexts[method], raw?.[method] || {});
+    }
+    return contexts;
+  }
+
+  function selectedSpot() {
+    return state.spots.find((item) => item.id === state.selectedSpotId) || null;
+  }
+
+  function option(value, label, selectedValue) {
+    return `<option value="${escapeHtml(value)}"${value === selectedValue ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
   function toggleMapVisibility() {
