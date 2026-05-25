@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -36,6 +36,19 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _upgrade_sqlite_schema()
+
+
+def _upgrade_sqlite_schema() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+    inspector = inspect(engine)
+    if "fishing_spots" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("fishing_spots")}
+    if "method_contexts" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE fishing_spots ADD COLUMN method_contexts JSON"))
 
 
 def get_db() -> Generator[Session, None, None]:
