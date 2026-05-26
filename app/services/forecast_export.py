@@ -106,11 +106,29 @@ def build_story(
             styles["meta"],
         ),
         Spacer(1, 6),
-        build_summary_table(summary, species_exports, styles),
-        Spacer(1, 10),
-        Paragraph("Condiciones del tramo exportado", styles["section"]),
-        build_conditions_table(rows, styles),
     ]
+    fishing_context = forecast.get("fishing_context") or forecast.get("meta", {}).get("fishing_context")
+    if fishing_context:
+        story.extend(
+            [
+                Paragraph(escape_text(fishing_context.get("interpretation", "")), styles["meta"]),
+                Paragraph(
+                    "Distancia de lance desde costa: "
+                    f"{fishing_context.get('casting_distance_m', 's/d')} m - "
+                    f"Zona: {escape_text(fishing_context.get('target_zone_label', 's/d'))}",
+                    styles["meta"],
+                ),
+                Spacer(1, 4),
+            ]
+        )
+    story.extend(
+        [
+            build_summary_table(summary, species_exports, styles),
+            Spacer(1, 10),
+            Paragraph("Condiciones del tramo exportado", styles["section"]),
+            build_conditions_table(rows, styles),
+        ]
+    )
 
     if species_scope == "all":
         story.extend(

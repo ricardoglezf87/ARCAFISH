@@ -31,12 +31,13 @@ echo.
 echo Si Open-Meteo falla por certificados en este equipo, edita .env y usa:
 echo HTTP_VERIFY_SSL=false
 echo.
+if "%ARCAFISH_PORT%"=="" set "ARCAFISH_PORT=8010"
 echo Abre en el navegador:
-echo http://127.0.0.1:8000
+echo http://127.0.0.1:%ARCAFISH_PORT%
 echo.
 
-start "" powershell -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:8000'"
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+start "" powershell -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:%ARCAFISH_PORT%'"
+python -m uvicorn app.main:app --host 127.0.0.1 --port %ARCAFISH_PORT% --reload
 goto end
 
 :error
