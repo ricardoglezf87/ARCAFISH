@@ -96,6 +96,42 @@ def test_filter_rows_respects_day_and_interval():
     assert all(row["datetime"].startswith("2026-05-20") for row in filtered)
 
 
+def test_filter_rows_aggregates_interval_averages():
+    rows = [
+        {
+            "datetime": "2026-05-20T09:00:00+01:00",
+            "weather_description": "Despejado",
+            "wind_speed_ms": 4.0,
+            "wind_direction_deg": 350,
+            "fishing_score": 50,
+            "fishing_category": "Regular",
+            "species_scores": {"dorado": {"score": 40, "category": "Regular", "base_score": 42}},
+        },
+        {
+            "datetime": "2026-05-20T10:00:00+01:00",
+            "weather_description": "Despejado",
+            "wind_speed_ms": 8.0,
+            "wind_direction_deg": 10,
+            "fishing_score": 70,
+            "fishing_category": "Buena",
+            "species_scores": {"dorado": {"score": 60, "category": "Buena", "base_score": 62}},
+        },
+    ]
+
+    filtered = filter_rows(rows, "2026-05-20", 3)
+
+    assert len(filtered) == 1
+    assert filtered[0]["datetime"] == "2026-05-20T09:00:00+01:00"
+    assert filtered[0]["period_end_datetime"] == "2026-05-20T12:00:00+01:00"
+    assert filtered[0]["sample_count"] == 2
+    assert filtered[0]["wind_speed_ms"] == 6.0
+    assert filtered[0]["wind_direction_deg"] == 0
+    assert filtered[0]["fishing_score"] == 60
+    assert filtered[0]["fishing_category"] == "Buena"
+    assert filtered[0]["species_scores"]["dorado"]["score"] == 50
+    assert filtered[0]["species_scores"]["dorado"]["category"] == "Regular"
+
+
 def test_resolve_species_exports_supports_selected_and_all():
     forecast = sample_forecast()
 

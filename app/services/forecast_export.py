@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
+from math import atan2, cos, degrees, radians, sin
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -10,6 +12,8 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+from app.services.fishing_score import score_category
 
 
 INK = colors.HexColor("#16232b")
@@ -74,8 +78,72 @@ def filter_rows(rows: list[dict], selected_day: str, interval_hours: int) -> lis
     filtered = list(rows)
     if selected_day != "all":
         filtered = [row for row in filtered if row_day_key(row.get("datetime")) == selected_day]
-    filtered = [row for row in filtered if row_matches_interval(row.get("datetime"), interval_hours)]
-    return filtered
+    return aggregate_rows(filtered, interval_hours)
+
+
+def aggregate_rows(rows: list[dict], interval_hours: int) -> list[dict]:
+    if interval_hours <= 1:
+        return list(rows)
+
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        value = row.get("datetime")
+        if not value:
+            continue
+        start = interval_start(datetime.fromisoformat(value), interval_hours)
+        grouped.setdefault(start.isoformat(), []).append(row)
+
+    return [
+        aggregate_interval(start_key, grouped[start_key], interval_hours)
+        for start_key in sorted(grouped)
+    ]
+
+
+def aggregate_interval(start_key: str, rows: list[dict], interval_hours: int) -> dict:
+    start = datetime.fromisoformat(start_key)
+    aggregate = dict(rows[0])
+    aggregate.update(
+        {
+            "datetime": start.isoformat(),
+            "period_end_datetime": (start + timedelta(hours=interval_hours)).isoformat(),
+            "period_hours": interval_hours,
+            "sample_count": len(rows),
+            "is_aggregate": True,
+        }
+    )
+
+    average_fields = {
+        "wind_speed_ms": 1,
+        "wind_gust_ms": 1,
+        "temperature_c": 1,
+        "precipitation_mm": 1,
+        "precipitation_probability": 0,
+        "pressure_hpa": 0,
+        "pressure_trend_hpa": 1,
+        "cloud_cover_percent": 0,
+        "wave_height_m": 1,
+        "wave_period_s": 0,
+        "sea_surface_temperature_c": 1,
+        "tide_height_m": 2,
+        "fishing_score": 0,
+    }
+    for field, digits in average_fields.items():
+        aggregate[field] = rounded_average(rows, field, digits)
+
+    aggregate["weather_code"] = most_common(rows, "weather_code")
+    aggregate["weather_description"] = most_common(rows, "weather_description") or aggregate.get("weather_description")
+    aggregate["wind_direction_deg"] = rounded_direction(rows, "wind_direction_deg")
+    aggregate["wave_direction_deg"] = rounded_direction(rows, "wave_direction_deg")
+    aggregate["tide_state"] = most_common(rows, "tide_state") or aggregate.get("tide_state")
+    aggregate["moon_phase"] = most_common(rows, "moon_phase") or aggregate.get("moon_phase")
+    aggregate["is_day"] = most_common(rows, "is_day")
+    aggregate["fishing_category"] = score_category(int(aggregate["fishing_score"] or 0))
+    aggregate["explanation"] = f"Media del tramo calculada con {len(rows)} hora(s)."
+    aggregate["safety_alerts"] = unique_items(rows, "safety_alerts")
+    aggregate["missing_fields"] = unique_items(rows, "missing_fields")
+    aggregate["factor_scores"] = average_mapping(rows, "factor_scores", 3)
+    aggregate["species_scores"] = aggregate_species_scores(rows)
+    return aggregate
 
 
 def resolve_species_exports(forecast: dict, species_scope: str, species_id: str) -> list[ExportSpecies]:
@@ -494,7 +562,7 @@ def build_conditions_table(rows: list[dict], styles: dict[str, ParagraphStyle]) 
     for row in rows:
         data.append(
             [
-                cell(format_hour(row.get("datetime")), styles["cell"]),
+                cell(format_row_hour(row), styles["cell"]),
                 cell(row.get("weather_description", "s/d"), styles["cell"]),
                 cell(f"{fmt(row.get('wind_speed_ms'), 'm/s')} / racha {fmt(row.get('wind_gust_ms'), 'm/s')}", styles["cell"]),
                 cell(f"{fmt(row.get('precipitation_mm'), 'mm')} / {fmt(row.get('precipitation_probability'), '%')}", styles["cell"]),
@@ -548,7 +616,7 @@ def build_species_rows_table(rows: list[dict], export: ExportSpecies, styles: di
         score_data = row_score(row, export.species_id)
         data.append(
             [
-                cell(format_hour(row.get("datetime")), styles["cell"]),
+                cell(format_row_hour(row), styles["cell"]),
                 cell(str(score_data.get("score", "s/d")), styles["cell_inverse"]),
                 cell(score_data.get("category", "s/d"), styles["cell_inverse"]),
                 cell(score_data.get("explanation") or human_row_reading(row), styles["cell"]),
@@ -627,10 +695,93 @@ def numeric_score(value: object) -> float | None:
         return None
 
 
-def row_matches_interval(value: str | None, interval_hours: int) -> bool:
-    if interval_hours <= 1 or not value:
-        return True
-    return datetime.fromisoformat(value).hour % interval_hours == 0
+def interval_start(moment: datetime, interval_hours: int) -> datetime:
+    hour = (moment.hour // interval_hours) * interval_hours
+    return moment.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+def rounded_average(rows: list[dict], key: str, digits: int) -> float | int | None:
+    values = [float(row[key]) for row in rows if isinstance(row.get(key), int | float)]
+    if not values:
+        return None
+    value = round(sum(values) / len(values), digits)
+    return int(value) if digits == 0 else value
+
+
+def rounded_direction(rows: list[dict], key: str) -> int | None:
+    values = [float(row[key]) for row in rows if isinstance(row.get(key), int | float)]
+    if not values:
+        return None
+    x = sum(cos(radians(value)) for value in values) / len(values)
+    y = sum(sin(radians(value)) for value in values) / len(values)
+    if abs(x) < 1e-9 and abs(y) < 1e-9:
+        return None
+    direction = round(degrees(atan2(y, x)) % 360)
+    return 0 if direction >= 360 else int(direction)
+
+
+def most_common(rows: list[dict], key: str) -> object | None:
+    values = [row.get(key) for row in rows if row.get(key) is not None]
+    if not values:
+        return None
+    return Counter(values).most_common(1)[0][0]
+
+
+def unique_items(rows: list[dict], key: str) -> list:
+    seen = []
+    for row in rows:
+        values = row.get(key) or []
+        for value in values:
+            if value not in seen:
+                seen.append(value)
+    return seen
+
+
+def average_mapping(rows: list[dict], key: str, digits: int) -> dict:
+    nested_keys = {
+        nested_key
+        for row in rows
+        for nested_key in (row.get(key) or {})
+        if isinstance((row.get(key) or {}).get(nested_key), int | float)
+    }
+    return {
+        nested_key: rounded_average([row.get(key) or {} for row in rows], nested_key, digits)
+        for nested_key in sorted(nested_keys)
+    }
+
+
+def aggregate_species_scores(rows: list[dict]) -> dict:
+    species_ids = {
+        species_id
+        for row in rows
+        for species_id in (row.get("species_scores") or {})
+    }
+    aggregated = {}
+    for species_id in sorted(species_ids):
+        score_rows = [
+            row["species_scores"][species_id]
+            for row in rows
+            if species_id in (row.get("species_scores") or {})
+        ]
+        if not score_rows:
+            continue
+        item = dict(score_rows[0])
+        score = rounded_average(score_rows, "score", 0)
+        item["score"] = score
+        if score is not None:
+            item["category"] = score_category(int(score))
+        item["base_score"] = rounded_average(score_rows, "base_score", 0)
+        item["seasonality_factor"] = rounded_average(score_rows, "seasonality_factor", 2)
+        item["method_factor"] = rounded_average(score_rows, "method_factor", 3)
+        item["distance_factor"] = rounded_average(score_rows, "distance_factor", 3)
+        item["target_zone_factor"] = rounded_average(score_rows, "target_zone_factor", 3)
+        item["spot_factor"] = rounded_average(score_rows, "spot_factor", 3)
+        item["factor_scores"] = average_mapping(score_rows, "factor_scores", 3)
+        item["safety_alerts"] = unique_items(score_rows, "safety_alerts")
+        item["missing_fields"] = unique_items(score_rows, "missing_fields")
+        item["explanation"] = f"Score medio del tramo calculado con {len(score_rows)} hora(s)."
+        aggregated[species_id] = item
+    return aggregated
 
 
 def row_day_key(value: str | None) -> str:
@@ -680,6 +831,20 @@ def format_hour(value: str | None) -> str:
     if not value:
         return "s/d"
     return datetime.fromisoformat(value).strftime("%d/%m %H:%M")
+
+
+def format_row_hour(row: dict) -> str:
+    start_value = row.get("datetime")
+    if not start_value:
+        return "s/d"
+    start = datetime.fromisoformat(start_value)
+    end_value = row.get("period_end_datetime")
+    if not end_value:
+        return start.strftime("%d/%m %H:%M")
+    end = datetime.fromisoformat(end_value)
+    if start.date() == end.date():
+        return f"{start:%d/%m %H:%M}-{end:%H:%M}"
+    return f"{start:%d/%m %H:%M}-{end:%d/%m %H:%M}"
 
 
 def format_generated_at(value: str | None) -> str:
