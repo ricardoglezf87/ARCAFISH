@@ -38,6 +38,18 @@ class FishingConditions:
 
 
 @dataclass(frozen=True)
+class FishingContext:
+    fishing_method: str
+    casting_distance_m: float
+    target_zone: str
+    water_column: str
+    spot_type: str | None = None
+    shore_type: str | None = None
+    spot_exposure: str | None = None
+    water_depth_estimate_m: float | None = None
+
+
+@dataclass(frozen=True)
 class SpeciesProfile:
     id: str
     name: str
@@ -58,6 +70,7 @@ class FishingScoreResult:
     species_id: str
     species_name: str
     score: int
+    base_score: int
     category: str
     explanation: str
     safety_alerts: list[str]
@@ -65,6 +78,10 @@ class FishingScoreResult:
     missing_fields: list[str]
     factor_scores: dict[str, float]
     seasonality_factor: float
+    method_factor: float = 1.0
+    distance_factor: float = 1.0
+    target_zone_factor: float = 1.0
+    spot_factor: float = 1.0
 
 
 GENERAL_WEIGHTS = {
@@ -232,6 +249,110 @@ SPECIES_PROFILES: dict[str, SpeciesProfile] = {
 }
 
 
+ALLOWED_FISHING_METHODS = {"float", "bottom", "spinning"}
+ALLOWED_TARGET_ZONES = {"shoreline", "shore_break", "inner_reef", "outer_reef", "deep_cast"}
+ALLOWED_WATER_COLUMNS = {"surface", "mid_water", "bottom"}
+
+FISHING_METHOD_FACTORS = {
+    "float": 0.9,
+    "bottom": 1.0,
+    "spinning": 1.0,
+}
+
+FISHING_METHOD_LABELS = {
+    "float": "Boya",
+    "bottom": "Fondo",
+    "spinning": "Spinning / rockfishing",
+}
+
+TARGET_ZONE_LABELS = {
+    "shoreline": "orilla directa",
+    "shore_break": "primera rompiente",
+    "inner_reef": "arrecife interior",
+    "outer_reef": "zona exterior",
+    "deep_cast": "lance profundo",
+}
+
+SPECIES_DISTANCE_PROFILES: dict[str, list[dict[str, float]]] = {
+    "sargo_chopa_roncador": [
+        {"min": 0, "max": 20, "factor": 1.0},
+        {"min": 20, "max": 40, "factor": 0.9},
+        {"min": 40, "max": 70, "factor": 0.5},
+        {"min": 70, "max": 999, "factor": 0.2},
+    ],
+    "vieja_pejeverde": [
+        {"min": 0, "max": 30, "factor": 1.0},
+        {"min": 30, "max": 50, "factor": 0.55},
+        {"min": 50, "max": 999, "factor": 0.25},
+    ],
+    "pulpo": [
+        {"min": 0, "max": 25, "factor": 1.0},
+        {"min": 25, "max": 50, "factor": 0.45},
+        {"min": 50, "max": 999, "factor": 0.15},
+    ],
+    "jurel_palometa_boga": [
+        {"min": 0, "max": 20, "factor": 0.8},
+        {"min": 20, "max": 60, "factor": 1.0},
+        {"min": 60, "max": 90, "factor": 0.55},
+        {"min": 90, "max": 999, "factor": 0.25},
+    ],
+    "catalufa": [
+        {"min": 0, "max": 10, "factor": 0.55},
+        {"min": 10, "max": 40, "factor": 1.0},
+        {"min": 40, "max": 70, "factor": 0.45},
+        {"min": 70, "max": 999, "factor": 0.2},
+    ],
+    "bicuda": [
+        {"min": 0, "max": 20, "factor": 0.45},
+        {"min": 20, "max": 80, "factor": 1.0},
+        {"min": 80, "max": 120, "factor": 0.55},
+        {"min": 120, "max": 999, "factor": 0.25},
+    ],
+    "bocinegro_sama": [
+        {"min": 0, "max": 30, "factor": 0.1},
+        {"min": 30, "max": 40, "factor": 0.45},
+        {"min": 40, "max": 60, "factor": 0.75},
+        {"min": 60, "max": 120, "factor": 1.0},
+        {"min": 120, "max": 150, "factor": 0.8},
+        {"min": 150, "max": 999, "factor": 0.5},
+    ],
+    "medregal": [
+        {"min": 0, "max": 30, "factor": 0.15},
+        {"min": 30, "max": 50, "factor": 0.55},
+        {"min": 50, "max": 120, "factor": 1.0},
+        {"min": 120, "max": 160, "factor": 0.7},
+        {"min": 160, "max": 999, "factor": 0.4},
+    ],
+    "dorado": [
+        {"min": 0, "max": 50, "factor": 0.1},
+        {"min": 50, "max": 70, "factor": 0.45},
+        {"min": 70, "max": 150, "factor": 1.0},
+        {"min": 150, "max": 999, "factor": 0.8},
+    ],
+    "burro_fula": [
+        {"min": 0, "max": 40, "factor": 0.85},
+        {"min": 40, "max": 80, "factor": 0.55},
+        {"min": 80, "max": 999, "factor": 0.25},
+    ],
+}
+
+SPECIES_TARGET_ZONE_FACTORS: dict[str, dict[str, float]] = {
+    "sargo_chopa_roncador": {"shoreline": 0.98, "shore_break": 1.05, "inner_reef": 0.95, "outer_reef": 0.82, "deep_cast": 0.75},
+    "vieja_pejeverde": {"shoreline": 1.05, "shore_break": 1.02, "inner_reef": 0.88, "outer_reef": 0.78, "deep_cast": 0.7},
+    "pulpo": {"shoreline": 1.05, "shore_break": 1.0, "inner_reef": 0.9, "outer_reef": 0.78, "deep_cast": 0.7},
+    "jurel_palometa_boga": {"shoreline": 0.95, "shore_break": 1.0, "inner_reef": 1.05, "outer_reef": 0.9, "deep_cast": 0.78},
+    "catalufa": {"shoreline": 0.86, "shore_break": 1.0, "inner_reef": 1.04, "outer_reef": 0.86, "deep_cast": 0.72},
+    "bicuda": {"shoreline": 0.84, "shore_break": 0.9, "inner_reef": 1.05, "outer_reef": 1.02, "deep_cast": 0.82},
+    "bocinegro_sama": {"shoreline": 0.85, "shore_break": 0.85, "inner_reef": 0.95, "outer_reef": 1.06, "deep_cast": 1.02},
+    "medregal": {"shoreline": 0.85, "shore_break": 0.9, "inner_reef": 0.98, "outer_reef": 1.06, "deep_cast": 1.0},
+    "dorado": {"shoreline": 0.82, "shore_break": 0.85, "inner_reef": 0.94, "outer_reef": 1.05, "deep_cast": 1.08},
+    "burro_fula": {"shoreline": 1.02, "shore_break": 1.0, "inner_reef": 0.92, "outer_reef": 0.82, "deep_cast": 0.72},
+}
+
+ROCK_AND_REEF_SPECIES = {"sargo_chopa_roncador", "vieja_pejeverde", "pulpo", "catalufa", "burro_fula"}
+LONG_CAST_SPECIES = {"bocinegro_sama", "medregal", "dorado", "bicuda"}
+
+
 FACTOR_LABELS = {
     "wind": "viento",
     "gust": "rachas",
@@ -252,6 +373,7 @@ FACTOR_LABELS = {
 def calculate_fishing_score(
     conditions: FishingConditions,
     species_id: str = "general",
+    fishing_context: FishingContext | None = None,
 ) -> FishingScoreResult:
     profile = SPECIES_PROFILES.get(species_id, SPECIES_PROFILES["general"])
     missing_fields = list(conditions.missing_fields)
@@ -270,6 +392,16 @@ def calculate_fishing_score(
     elif safety_multiplier < 1:
         final_score = min(final_score, 59)
 
+    weather_score = final_score
+    method_factor, distance_factor, target_zone_factor, spot_factor = _context_factors(
+        conditions,
+        profile,
+        fishing_context,
+    )
+    final_score = int(
+        round(max(0, min(100, weather_score * method_factor * distance_factor * target_zone_factor * spot_factor)))
+    )
+
     category = score_category(final_score)
     confidence = _confidence_label(missing_fields)
     explanation = _build_explanation(
@@ -278,12 +410,20 @@ def calculate_fishing_score(
         month=conditions.datetime.month,
         safety_alerts=safety_alerts,
         confidence=confidence,
+        fishing_context=fishing_context,
+        context_factors={
+            "method": method_factor,
+            "distance": distance_factor,
+            "target_zone": target_zone_factor,
+            "spot": spot_factor,
+        },
     )
 
     return FishingScoreResult(
         species_id=profile.id,
         species_name=profile.name,
         score=final_score,
+        base_score=weather_score,
         category=category,
         explanation=explanation,
         safety_alerts=safety_alerts,
@@ -291,6 +431,10 @@ def calculate_fishing_score(
         missing_fields=sorted(set(missing_fields)),
         factor_scores={key: round(value, 3) for key, value in factor_scores.items()},
         seasonality_factor=round(seasonality_factor, 2),
+        method_factor=round(method_factor, 3),
+        distance_factor=round(distance_factor, 3),
+        target_zone_factor=round(target_zone_factor, 3),
+        spot_factor=round(spot_factor, 3),
     )
 
 
@@ -318,6 +462,97 @@ def list_species_profiles() -> list[dict]:
     ]
 
 
+def calculate_target_zone(casting_distance_m: float) -> str:
+    distance = max(0.0, float(casting_distance_m))
+    if distance <= 5:
+        return "shoreline"
+    if distance <= 20:
+        return "shore_break"
+    if distance <= 50:
+        return "inner_reef"
+    if distance <= 100:
+        return "outer_reef"
+    return "deep_cast"
+
+
+def build_fishing_context(
+    fishing_method: str,
+    casting_distance_m: float,
+    target_zone: str | None = None,
+    water_column: str | None = None,
+    spot_type: str | None = None,
+    shore_type: str | None = None,
+    spot_exposure: str | None = None,
+    water_depth_estimate_m: float | None = None,
+) -> FishingContext:
+    method = fishing_method if fishing_method in ALLOWED_FISHING_METHODS else "float"
+    distance = max(0.0, float(casting_distance_m))
+    zone = target_zone if target_zone in ALLOWED_TARGET_ZONES else calculate_target_zone(distance)
+    column = water_column if water_column in ALLOWED_WATER_COLUMNS else _default_water_column(method)
+    return FishingContext(
+        fishing_method=method,
+        casting_distance_m=distance,
+        target_zone=zone,
+        water_column=column,
+        spot_type=spot_type or None,
+        shore_type=shore_type or None,
+        spot_exposure=spot_exposure or None,
+        water_depth_estimate_m=water_depth_estimate_m,
+    )
+
+
+def get_species_distance_factor(species_id: str, casting_distance_m: float) -> float:
+    distance = max(0.0, float(casting_distance_m))
+    profile = SPECIES_DISTANCE_PROFILES.get(species_id)
+    if not profile:
+        return 1.0
+    for distance_range in profile:
+        if distance_range["min"] <= distance < distance_range["max"]:
+            return distance_range["factor"]
+    return 0.5
+
+
+def serialize_fishing_context(fishing_context: FishingContext) -> dict:
+    return {
+        "fishing_method": fishing_context.fishing_method,
+        "fishing_method_label": FISHING_METHOD_LABELS.get(fishing_context.fishing_method, fishing_context.fishing_method),
+        "casting_distance_m": round(fishing_context.casting_distance_m, 1),
+        "target_zone": fishing_context.target_zone,
+        "target_zone_label": TARGET_ZONE_LABELS.get(fishing_context.target_zone, fishing_context.target_zone),
+        "water_column": fishing_context.water_column,
+        "spot_type": fishing_context.spot_type,
+        "shore_type": fishing_context.shore_type,
+        "spot_exposure": fishing_context.spot_exposure,
+        "water_depth_estimate_m": fishing_context.water_depth_estimate_m,
+        "interpretation": fishing_context_interpretation(fishing_context),
+    }
+
+
+def fishing_context_interpretation(fishing_context: FishingContext) -> str:
+    method = fishing_context.fishing_method
+    distance = fishing_context.casting_distance_m
+    if method == "float" and distance <= 30:
+        return (
+            "Estas pescando cerca de costa, entre 0 y 30 m. "
+            "Esta zona favorece especies de rompiente como sargo, chopa, vieja, boga y roncador. "
+            "La espuma moderada y el agua algo movida pueden mejorar la actividad."
+        )
+    if method == "spinning" and distance <= 30:
+        return (
+            "Estas haciendo spinning / rockfishing corto en proximidad costera. "
+            "La primera rompiente favorece depredadores pequenos y especies de espuma, "
+            "pero limita especies de lance largo."
+        )
+    if method == "bottom" and 50 <= distance <= 100:
+        return (
+            f"Estas pescando a fondo con lance largo, aproximadamente a {distance:.0f} m desde costa. "
+            "Esta distancia favorece especies de zonas exteriores como sama, bocinegro, medregal o dorado."
+        )
+    zone_label = TARGET_ZONE_LABELS.get(fishing_context.target_zone, fishing_context.target_zone)
+    method_label = FISHING_METHOD_LABELS.get(method, method)
+    return f"{method_label} a {distance:.0f} m desde costa, en {zone_label}."
+
+
 def _compute_factor_scores(
     conditions: FishingConditions,
     profile: SpeciesProfile,
@@ -338,6 +573,88 @@ def _compute_factor_scores(
         "air_temp": _air_temp_factor(conditions.temperature_c, missing_fields),
         "moon": _moon_factor(conditions.moon_phase),
     }
+
+
+def _default_water_column(fishing_method: str) -> str:
+    if fishing_method == "bottom":
+        return "bottom"
+    if fishing_method == "spinning":
+        return "mid_water"
+    return "surface"
+
+
+def _context_factors(
+    conditions: FishingConditions,
+    profile: SpeciesProfile,
+    fishing_context: FishingContext | None,
+) -> tuple[float, float, float, float]:
+    if fishing_context is None or profile.id == "general":
+        return 1.0, 1.0, 1.0, 1.0
+
+    method_factor = FISHING_METHOD_FACTORS.get(fishing_context.fishing_method, 1.0)
+    distance_factor = get_species_distance_factor(profile.id, fishing_context.casting_distance_m)
+    target_zone_factor = _target_zone_factor(profile.id, fishing_context.target_zone)
+    spot_factor = _spot_factor(conditions, profile, fishing_context)
+    return method_factor, distance_factor, target_zone_factor, spot_factor
+
+
+def _target_zone_factor(species_id: str, target_zone: str) -> float:
+    return SPECIES_TARGET_ZONE_FACTORS.get(species_id, {}).get(target_zone, 1.0)
+
+
+def _spot_factor(conditions: FishingConditions, profile: SpeciesProfile, fishing_context: FishingContext) -> float:
+    factor = 1.0
+    method = fishing_context.fishing_method
+    distance = fishing_context.casting_distance_m
+    target_zone = fishing_context.target_zone
+    spot_type = (fishing_context.spot_type or "").lower()
+    shore_type = (fishing_context.shore_type or "").lower()
+    exposure = (fishing_context.spot_exposure or "").lower()
+
+    if spot_type in {"rocky", "reef", "mixed"} and profile.id in ROCK_AND_REEF_SPECIES:
+        factor *= 1.05
+    elif spot_type == "sandy" and profile.id in ROCK_AND_REEF_SPECIES:
+        factor *= 0.92
+
+    if shore_type == "volcanic" and profile.id in ROCK_AND_REEF_SPECIES:
+        factor *= 1.03
+    elif shore_type == "beach" and profile.id in {"pulpo", "vieja_pejeverde", "catalufa"}:
+        factor *= 0.94
+
+    is_short_coast = method in {"float", "spinning"} and distance <= 30 and target_zone in {"shoreline", "shore_break"}
+    if is_short_coast:
+        if exposure == "semi_exposed":
+            factor *= 1.04
+        elif exposure == "exposed":
+            factor *= 0.9
+        elif exposure == "sheltered":
+            factor *= 0.96
+
+        if conditions.wave_height_m is not None:
+            wave = conditions.wave_height_m
+            if 0.4 <= wave <= 1.3:
+                factor *= 1.08
+            elif wave < 0.2:
+                factor *= 0.9
+            elif wave >= 1.8:
+                factor *= 0.82
+
+        if conditions.wind_speed_ms is not None and conditions.wind_speed_ms >= 9:
+            factor *= 0.9
+
+        if _time_phase(conditions, []) in {"dawn", "dusk"}:
+            factor *= 1.05
+
+    is_long_bottom = method == "bottom" and 50 <= distance <= 100
+    if is_long_bottom:
+        if profile.id in LONG_CAST_SPECIES:
+            factor *= 1.04
+        if spot_type in {"rocky", "reef", "mixed"}:
+            factor *= 1.03
+        if fishing_context.water_depth_estimate_m is not None and fishing_context.water_depth_estimate_m >= 8:
+            factor *= 1.03
+
+    return max(0.65, min(1.25, factor))
 
 
 def _weighted_average(factor_scores: dict[str, float], weights: dict[str, float]) -> float:
@@ -545,6 +862,8 @@ def _build_explanation(
     month: int,
     safety_alerts: list[str],
     confidence: str,
+    fishing_context: FishingContext | None = None,
+    context_factors: dict[str, float] | None = None,
 ) -> str:
     weighted_deltas = [
         (factor_id, profile.weights.get(factor_id, 0.0) * (factor_value - 0.5))
@@ -580,7 +899,52 @@ def _build_explanation(
     if confidence != "alta":
         parts.append(f"Confianza {confidence} por datos incompletos.")
 
+    context_text = _context_explanation(profile, fishing_context, context_factors or {})
+    if context_text:
+        parts.append(context_text)
+
     return " ".join(parts)
+
+
+def _context_explanation(
+    profile: SpeciesProfile,
+    fishing_context: FishingContext | None,
+    context_factors: dict[str, float],
+) -> str:
+    if fishing_context is None or profile.id == "general":
+        return ""
+
+    method = fishing_context.fishing_method
+    distance = fishing_context.casting_distance_m
+    zone_label = TARGET_ZONE_LABELS.get(fishing_context.target_zone, fishing_context.target_zone)
+    distance_factor = context_factors.get("distance", 1.0)
+    spot_factor = context_factors.get("spot", 1.0)
+
+    if method == "float" and distance <= 30 and distance_factor >= 0.85:
+        return f"Muy compatible con boya/spinning corto en {zone_label}."
+
+    if method in {"float", "spinning"} and distance <= 30 and distance_factor <= 0.25:
+        return (
+            f"Poco compatible con pesca a {distance:.0f} m desde costa; "
+            "suele ser mas favorable con lances largos o zonas exteriores."
+        )
+
+    if method == "bottom" and 50 <= distance <= 100 and distance_factor >= 0.85:
+        return f"La distancia de lance largo encaja bien con {profile.name.lower()}."
+
+    if distance_factor <= 0.35:
+        return f"La distancia de {distance:.0f} m penaliza a esta especie frente a su zona ideal."
+
+    if spot_factor >= 1.08:
+        return "El tipo de spot y las condiciones de rompiente suman compatibilidad."
+
+    if distance_factor >= 0.85:
+        return f"La distancia de lance encaja bien con su zona habitual en {zone_label}."
+
+    if distance_factor < 0.65:
+        return f"Compatibilidad media-baja por distancia de lance en {zone_label}."
+
+    return ""
 
 
 def _time_phase(conditions: FishingConditions, missing_fields: list[str]) -> str:

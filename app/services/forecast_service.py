@@ -1,4 +1,5 @@
 from collections import Counter
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -11,9 +12,11 @@ from app.database import utcnow
 from app.models import FishingSpot, ForecastCache
 from app.services.astronomy_provider import LocalAstronomyProvider
 from app.services.fishing_score import (
+    FishingContext,
     FishingConditions,
     calculate_fishing_score,
     list_species_profiles,
+    serialize_fishing_context,
 )
 from app.services.marine_provider import OpenMeteoMarineProvider
 from app.services.tide_provider import DerivedTideProvider
@@ -35,24 +38,31 @@ class ForecastService:
         self.astronomy_provider = LocalAstronomyProvider(self.settings)
         self.tide_provider = DerivedTideProvider()
 
-    async def get_forecast(self, spot: FishingSpot, force_refresh: bool = False) -> dict:
+    async def get_forecast(
+        self,
+        spot: FishingSpot,
+        force_refresh: bool = False,
+        fishing_context: FishingContext | None = None,
+    ) -> dict:
         if not force_refresh:
             cached = self._get_valid_cache(spot)
             if cached is not None:
-                cached.raw_data.setdefault("meta", {})["cached"] = True
-                return cached.raw_data
+                forecast = deepcopy(cached.raw_data)
+                forecast.setdefault("meta", {})["cached"] = True
+                return self._rescore_forecast(forecast, fishing_context)
 
         try:
             weather_raw, marine_raw = await self._fetch_external_data(spot)
         except (httpx.HTTPError, RuntimeError) as exc:
             stale = self._get_latest_cache(spot)
             if stale is not None:
-                stale.raw_data.setdefault("meta", {})["cached"] = True
-                stale.raw_data["meta"]["warning"] = "Datos de cache caducada por error del proveedor externo."
-                return stale.raw_data
+                forecast = deepcopy(stale.raw_data)
+                forecast.setdefault("meta", {})["cached"] = True
+                forecast["meta"]["warning"] = "Datos de cache caducada por error del proveedor externo."
+                return self._rescore_forecast(forecast, fishing_context)
             raise ProviderUnavailableError(f"No se pudo obtener el pronostico externo: {exc}") from exc
 
-        forecast = self._build_response(spot, weather_raw, marine_raw)
+        forecast = self._build_response(spot, weather_raw, marine_raw, fishing_context)
         self._store_cache(spot.id, forecast)
         return forecast
 
@@ -61,7 +71,13 @@ class ForecastService:
         marine = await self.marine_provider.fetch(spot.latitude, spot.longitude, self.settings.forecast_days)
         return weather, marine
 
-    def _build_response(self, spot: FishingSpot, weather_raw: dict, marine_raw: dict) -> dict:
+    def _build_response(
+        self,
+        spot: FishingSpot,
+        weather_raw: dict,
+        marine_raw: dict,
+        fishing_context: FishingContext | None = None,
+    ) -> dict:
         tz = ZoneInfo(self.settings.canary_timezone)
         weather_hourly = weather_raw.get("hourly") or {}
         marine_hourly = marine_raw.get("hourly") or {}
@@ -121,7 +137,7 @@ class ForecastService:
             )
             general_score = calculate_fishing_score(conditions, "general")
             species_scores = {
-                species["id"]: _serialize_score(calculate_fishing_score(conditions, species["id"]))
+                species["id"]: _serialize_score(calculate_fishing_score(conditions, species["id"], fishing_context))
                 for species in list_species_profiles()
             }
             hourly_rows.append(
@@ -159,6 +175,7 @@ class ForecastService:
             )
 
         summary = self._summary(hourly_rows, now_local)
+        fishing_context_data = serialize_fishing_context(fishing_context) if fishing_context else None
         return {
             "spot": {
                 "id": spot.id,
@@ -166,7 +183,9 @@ class ForecastService:
                 "latitude": spot.latitude,
                 "longitude": spot.longitude,
                 "notes": spot.notes,
+                "method_contexts": spot.method_contexts,
             },
+            "fishing_context": fishing_context_data,
             "summary": summary,
             "hourly": hourly_rows,
             "meta": {
@@ -181,9 +200,11 @@ class ForecastService:
                 "limitations": [
                     "La marea se deriva de sea_level_height_msl de Open-Meteo Marine; no sustituye tablas oficiales de mareas.",
                     "La exposicion viento-costa queda preparada para una futura capa geoespacial de costa.",
+                    "La distancia de lance se interpreta como distancia horizontal desde costa, no como profundidad.",
                     "El score general es un promedio ponderado de las proximas 24 horas desde el momento actual.",
                     "La tabla permite cambiar el intervalo de visualizacion sin volver a pedir datos al proveedor.",
                 ],
+                "fishing_context": fishing_context_data,
                 "species_profiles": list_species_profiles(),
                 "sources": [
                     "https://open-meteo.com/en/docs",
@@ -265,6 +286,30 @@ class ForecastService:
             }
         return summaries
 
+    def _rescore_forecast(self, forecast: dict, fishing_context: FishingContext | None) -> dict:
+        hourly_rows = forecast.get("hourly") or []
+        for row in hourly_rows:
+            conditions = _conditions_from_row(row)
+            general_score = calculate_fishing_score(conditions, "general")
+            row["fishing_score"] = general_score.score
+            row["fishing_category"] = general_score.category
+            row["explanation"] = general_score.explanation
+            row["safety_alerts"] = general_score.safety_alerts
+            row["confidence"] = general_score.confidence
+            row["missing_fields"] = general_score.missing_fields
+            row["factor_scores"] = general_score.factor_scores
+            row["species_scores"] = {
+                species["id"]: _serialize_score(calculate_fishing_score(conditions, species["id"], fishing_context))
+                for species in list_species_profiles()
+            }
+
+        now_local = datetime.now(ZoneInfo(self.settings.canary_timezone))
+        forecast["summary"] = self._summary(hourly_rows, now_local)
+        fishing_context_data = serialize_fishing_context(fishing_context) if fishing_context else None
+        forecast["fishing_context"] = fishing_context_data
+        forecast.setdefault("meta", {})["fishing_context"] = fishing_context_data
+        return forecast
+
     def _get_valid_cache(self, spot: FishingSpot) -> ForecastCache | None:
         now = utcnow()
         statement = (
@@ -339,6 +384,38 @@ def _row_datetime(row: dict) -> datetime:
     return datetime.fromisoformat(row["datetime"])
 
 
+def _conditions_from_row(row: dict) -> FishingConditions:
+    return FishingConditions(
+        datetime=datetime.fromisoformat(row["datetime"]),
+        wind_speed_ms=_number_or_none(row.get("wind_speed_ms")),
+        wind_gust_ms=_number_or_none(row.get("wind_gust_ms")),
+        wind_direction_deg=_number_or_none(row.get("wind_direction_deg")),
+        temperature_c=_number_or_none(row.get("temperature_c")),
+        sea_surface_temperature_c=_number_or_none(row.get("sea_surface_temperature_c")),
+        precipitation_mm=_number_or_none(row.get("precipitation_mm")),
+        precipitation_probability=_number_or_none(row.get("precipitation_probability")),
+        pressure_hpa=_number_or_none(row.get("pressure_hpa")),
+        pressure_trend_hpa=_number_or_none(row.get("pressure_trend_hpa")),
+        cloud_cover_percent=_number_or_none(row.get("cloud_cover_percent")),
+        wave_height_m=_number_or_none(row.get("wave_height_m")),
+        wave_period_s=_number_or_none(row.get("wave_period_s")),
+        wave_direction_deg=_number_or_none(row.get("wave_direction_deg")),
+        tide_state=None if row.get("tide_state") == "sin datos" else row.get("tide_state"),
+        tide_height_m=_number_or_none(row.get("tide_height_m")),
+        moon_phase=row.get("moon_phase"),
+        sunrise=_datetime_or_none(row.get("sunrise")),
+        sunset=_datetime_or_none(row.get("sunset")),
+        is_day=None,
+        weather_description=row.get("weather_description"),
+    )
+
+
+def _datetime_or_none(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value)
+
+
 def _rows_for_next_24h(hourly_rows: list[dict], now_local: datetime) -> list[dict]:
     rows = [
         row
@@ -366,6 +443,15 @@ def _series_value(series: dict, key: str, index: int | None) -> float | None:
     if index < 0 or index >= len(values):
         return None
     value = values[index]
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _number_or_none(value: float | int | str | None) -> float | None:
     if value is None:
         return None
     try:
@@ -414,6 +500,7 @@ def _serialize_score(score) -> dict:  # noqa: ANN001
         "species_id": score.species_id,
         "species_name": score.species_name,
         "score": score.score,
+        "base_score": score.base_score,
         "category": score.category,
         "explanation": score.explanation,
         "safety_alerts": score.safety_alerts,
@@ -421,6 +508,10 @@ def _serialize_score(score) -> dict:  # noqa: ANN001
         "missing_fields": score.missing_fields,
         "factor_scores": score.factor_scores,
         "seasonality_factor": score.seasonality_factor,
+        "method_factor": score.method_factor,
+        "distance_factor": score.distance_factor,
+        "target_zone_factor": score.target_zone_factor,
+        "spot_factor": score.spot_factor,
     }
 
 

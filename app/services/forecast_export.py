@@ -1,14 +1,37 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
+from math import atan2, cos, degrees, radians, sin
 
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+from app.services.fishing_score import score_category
+
+
+INK = colors.HexColor("#16232b")
+MUTED = colors.HexColor("#52636c")
+PANEL = colors.HexColor("#f6f8f7")
+LINE = colors.HexColor("#d8e0dd")
+SEA = colors.HexColor("#1976b9")
+NAVY = colors.HexColor("#173247")
+GREEN = colors.HexColor("#1f8a5b")
+TEAL = colors.HexColor("#0786a8")
+ORANGE = colors.HexColor("#d8891c")
+RED = colors.HexColor("#c7372f")
+NEUTRAL = colors.HexColor("#62727c")
+PALE_SEA = colors.HexColor("#e4f3f6")
+PALE_GREEN = colors.HexColor("#e4f5ec")
+PALE_ORANGE = colors.HexColor("#fff2d9")
+PALE_RED = colors.HexColor("#fde8e6")
+PALE_NEUTRAL = colors.HexColor("#eef2f1")
 
 
 @dataclass(frozen=True)
@@ -35,15 +58,15 @@ def build_forecast_pdf(
         pagesize=landscape(A4),
         leftMargin=14 * mm,
         rightMargin=14 * mm,
-        topMargin=12 * mm,
-        bottomMargin=12 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
         title=pdf_filename_base(forecast, selected_day, species_scope, species_id),
         author="ARCAFISH",
     )
 
     styles = build_styles()
     story = build_story(forecast, rows, selected_day, species_scope, interval_hours, species_exports, styles)
-    document.build(story)
+    document.build(story, onFirstPage=draw_page_frame, onLaterPages=draw_page_frame)
     return buffer.getvalue()
 
 
@@ -55,8 +78,72 @@ def filter_rows(rows: list[dict], selected_day: str, interval_hours: int) -> lis
     filtered = list(rows)
     if selected_day != "all":
         filtered = [row for row in filtered if row_day_key(row.get("datetime")) == selected_day]
-    filtered = [row for row in filtered if row_matches_interval(row.get("datetime"), interval_hours)]
-    return filtered
+    return aggregate_rows(filtered, interval_hours)
+
+
+def aggregate_rows(rows: list[dict], interval_hours: int) -> list[dict]:
+    if interval_hours <= 1:
+        return list(rows)
+
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        value = row.get("datetime")
+        if not value:
+            continue
+        start = interval_start(datetime.fromisoformat(value), interval_hours)
+        grouped.setdefault(start.isoformat(), []).append(row)
+
+    return [
+        aggregate_interval(start_key, grouped[start_key], interval_hours)
+        for start_key in sorted(grouped)
+    ]
+
+
+def aggregate_interval(start_key: str, rows: list[dict], interval_hours: int) -> dict:
+    start = datetime.fromisoformat(start_key)
+    aggregate = dict(rows[0])
+    aggregate.update(
+        {
+            "datetime": start.isoformat(),
+            "period_end_datetime": (start + timedelta(hours=interval_hours)).isoformat(),
+            "period_hours": interval_hours,
+            "sample_count": len(rows),
+            "is_aggregate": True,
+        }
+    )
+
+    average_fields = {
+        "wind_speed_ms": 1,
+        "wind_gust_ms": 1,
+        "temperature_c": 1,
+        "precipitation_mm": 1,
+        "precipitation_probability": 0,
+        "pressure_hpa": 0,
+        "pressure_trend_hpa": 1,
+        "cloud_cover_percent": 0,
+        "wave_height_m": 1,
+        "wave_period_s": 0,
+        "sea_surface_temperature_c": 1,
+        "tide_height_m": 2,
+        "fishing_score": 0,
+    }
+    for field, digits in average_fields.items():
+        aggregate[field] = rounded_average(rows, field, digits)
+
+    aggregate["weather_code"] = most_common(rows, "weather_code")
+    aggregate["weather_description"] = most_common(rows, "weather_description") or aggregate.get("weather_description")
+    aggregate["wind_direction_deg"] = rounded_direction(rows, "wind_direction_deg")
+    aggregate["wave_direction_deg"] = rounded_direction(rows, "wave_direction_deg")
+    aggregate["tide_state"] = most_common(rows, "tide_state") or aggregate.get("tide_state")
+    aggregate["moon_phase"] = most_common(rows, "moon_phase") or aggregate.get("moon_phase")
+    aggregate["is_day"] = most_common(rows, "is_day")
+    aggregate["fishing_category"] = score_category(int(aggregate["fishing_score"] or 0))
+    aggregate["explanation"] = f"Media del tramo calculada con {len(rows)} hora(s)."
+    aggregate["safety_alerts"] = unique_items(rows, "safety_alerts")
+    aggregate["missing_fields"] = unique_items(rows, "missing_fields")
+    aggregate["factor_scores"] = average_mapping(rows, "factor_scores", 3)
+    aggregate["species_scores"] = aggregate_species_scores(rows)
+    return aggregate
 
 
 def resolve_species_exports(forecast: dict, species_scope: str, species_id: str) -> list[ExportSpecies]:
@@ -93,51 +180,44 @@ def build_story(
     generated_at = forecast.get("meta", {}).get("generated_at")
 
     story: list = [
-        Paragraph("ARCAFISH - Exportacion de pronostico", styles["title"]),
-        Paragraph(escape_text(spot.get("name", "Punto sin nombre")), styles["heading"]),
-        Paragraph(
-            f"{spot.get('latitude', 0):.4f}, {spot.get('longitude', 0):.4f} - "
-            f"{describe_period(selected_day)} - Intervalo cada {interval_hours} h",
-            styles["meta"],
-        ),
-        Paragraph(
-            f"Emitido: {format_generated_at(generated_at)} - "
-            f"Perfiles exportados: {describe_species_scope(species_scope, species_exports)}",
-            styles["meta"],
-        ),
-        Spacer(1, 6),
+        build_header_panel(spot, selected_day, interval_hours, generated_at, species_scope, species_exports, styles),
+        Spacer(1, 8),
         build_summary_table(summary, species_exports, styles),
-        Spacer(1, 10),
-        Paragraph("Condiciones del tramo exportado", styles["section"]),
-        build_conditions_table(rows, styles),
+        Spacer(1, 8),
     ]
+    fishing_context = forecast.get("fishing_context") or forecast.get("meta", {}).get("fishing_context")
+    if fishing_context:
+        story.extend([build_context_callout(fishing_context, styles), Spacer(1, 8)])
+    story.extend(
+        [
+            section_title("Condiciones del tramo exportado", styles),
+            build_conditions_table(rows, styles),
+        ]
+    )
 
     if species_scope == "all":
         story.extend(
             [
-                Spacer(1, 10),
-                Paragraph("Resumen por perfiles", styles["section"]),
+                Spacer(1, 8),
+                section_title("Resumen por perfiles", styles),
                 build_species_summary_table(species_exports, styles),
             ]
         )
         for index, export in enumerate(species_exports):
             story.extend(
                 [
-                    PageBreak() if index > 0 else Spacer(1, 10),
-                    Paragraph(f"Perfil: {escape_text(export.name)}", styles["section"]),
-                    Paragraph(
-                        f"Score 24 h: {export.summary.get('score', 's/d')} - "
-                        f"{escape_text(export.summary.get('category', 's/d'))}",
-                        styles["meta"],
-                    ),
+                    PageBreak() if index > 0 else Spacer(1, 8),
+                    section_title(f"Perfil: {export.name}", styles),
+                    build_profile_badge(export, styles),
                     build_species_rows_table(rows, export, styles),
                 ]
             )
     else:
         story.extend(
             [
-                Spacer(1, 10),
-                Paragraph(f"Score exportado: {escape_text(species_exports[0].name)}", styles["section"]),
+                Spacer(1, 8),
+                section_title(f"Score exportado: {species_exports[0].name}", styles),
+                build_profile_badge(species_exports[0], styles),
                 build_species_rows_table(rows, species_exports[0], styles),
             ]
         )
@@ -152,28 +232,46 @@ def build_styles() -> dict[str, ParagraphStyle]:
             "ExportTitle",
             parent=sample["Title"],
             fontName="Helvetica-Bold",
-            fontSize=18,
-            leading=22,
-            textColor=colors.HexColor("#173247"),
-            spaceAfter=4,
+            fontSize=20,
+            leading=23,
+            textColor=colors.white,
+            spaceAfter=2,
         ),
         "heading": ParagraphStyle(
             "ExportHeading",
             parent=sample["Heading2"],
             fontName="Helvetica-Bold",
-            fontSize=13,
-            leading=16,
-            textColor=colors.HexColor("#16232b"),
+            fontSize=14,
+            leading=17,
+            textColor=colors.white,
             spaceAfter=2,
+        ),
+        "brand": ParagraphStyle(
+            "ExportBrand",
+            parent=sample["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#bfe5ee"),
+            spaceAfter=3,
+        ),
+        "header_meta": ParagraphStyle(
+            "ExportHeaderMeta",
+            parent=sample["BodyText"],
+            fontName="Helvetica",
+            fontSize=8.2,
+            leading=10.2,
+            textColor=colors.HexColor("#d8eef2"),
+            alignment=TA_RIGHT,
         ),
         "section": ParagraphStyle(
             "ExportSection",
             parent=sample["Heading3"],
             fontName="Helvetica-Bold",
-            fontSize=11,
+            fontSize=10,
             leading=14,
-            textColor=colors.HexColor("#173247"),
-            spaceAfter=4,
+            textColor=colors.white,
+            spaceAfter=0,
         ),
         "meta": ParagraphStyle(
             "ExportMeta",
@@ -181,8 +279,33 @@ def build_styles() -> dict[str, ParagraphStyle]:
             fontName="Helvetica",
             fontSize=9,
             leading=11,
-            textColor=colors.HexColor("#52636c"),
+            textColor=MUTED,
             spaceAfter=2,
+        ),
+        "metric_label": ParagraphStyle(
+            "ExportMetricLabel",
+            parent=sample["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=7.2,
+            leading=9,
+            textColor=MUTED,
+        ),
+        "metric_value": ParagraphStyle(
+            "ExportMetricValue",
+            parent=sample["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=12,
+            leading=14,
+            textColor=INK,
+        ),
+        "table_header": ParagraphStyle(
+            "ExportTableHeader",
+            parent=sample["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=7.2,
+            leading=8.6,
+            textColor=colors.white,
+            alignment=TA_CENTER,
         ),
         "cell": ParagraphStyle(
             "ExportCell",
@@ -190,7 +313,7 @@ def build_styles() -> dict[str, ParagraphStyle]:
             fontName="Helvetica",
             fontSize=7.4,
             leading=9,
-            textColor=colors.HexColor("#16232b"),
+            textColor=INK,
         ),
         "cell_bold": ParagraphStyle(
             "ExportCellBold",
@@ -198,133 +321,467 @@ def build_styles() -> dict[str, ParagraphStyle]:
             fontName="Helvetica-Bold",
             fontSize=7.4,
             leading=9,
-            textColor=colors.HexColor("#16232b"),
+            textColor=INK,
+        ),
+        "cell_inverse": ParagraphStyle(
+            "ExportCellInverse",
+            parent=sample["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=7.4,
+            leading=9,
+            textColor=colors.white,
+            alignment=TA_CENTER,
         ),
     }
 
 
-def build_summary_table(summary: dict, species_exports: list[ExportSpecies], styles: dict[str, ParagraphStyle]) -> Table:
-    target = species_exports[0].summary if len(species_exports) == 1 else summary
+def draw_page_frame(canvas, document) -> None:  # noqa: ANN001
+    width, height = landscape(A4)
+    canvas.saveState()
+    canvas.setFillColor(NAVY)
+    canvas.rect(0, height - 5 * mm, width, 5 * mm, stroke=0, fill=1)
+    canvas.setFillColor(SEA)
+    canvas.rect(0, height - 5 * mm, 58 * mm, 5 * mm, stroke=0, fill=1)
+    canvas.setStrokeColor(LINE)
+    canvas.setLineWidth(0.4)
+    canvas.line(document.leftMargin, 9 * mm, width - document.rightMargin, 9 * mm)
+    canvas.setFillColor(MUTED)
+    canvas.setFont("Helvetica", 7)
+    canvas.drawString(document.leftMargin, 5.5 * mm, "ARCAFISH")
+    canvas.drawRightString(width - document.rightMargin, 5.5 * mm, f"Pagina {canvas.getPageNumber()}")
+    canvas.restoreState()
+
+
+def build_header_panel(
+    spot: dict,
+    selected_day: str,
+    interval_hours: int,
+    generated_at: str | None,
+    species_scope: str,
+    species_exports: list[ExportSpecies],
+    styles: dict[str, ParagraphStyle],
+) -> Table:
+    location = f"{spot.get('latitude', 0):.4f}, {spot.get('longitude', 0):.4f}"
+    left = [
+        Paragraph("ARCAFISH", styles["brand"]),
+        Paragraph("Exportacion de pronostico", styles["title"]),
+        Paragraph(escape_text(spot.get("name", "Punto sin nombre")), styles["heading"]),
+    ]
+    right = [
+        Paragraph(
+            "<b>Periodo</b><br/>"
+            f"{escape_text(describe_period(selected_day))}<br/><br/>"
+            "<b>Intervalo</b><br/>"
+            f"Cada {interval_hours} h<br/><br/>"
+            "<b>Coordenadas</b><br/>"
+            f"{escape_text(location)}",
+            styles["header_meta"],
+        ),
+        Paragraph(
+            "<br/><b>Emitido</b><br/>"
+            f"{escape_text(format_generated_at(generated_at))}<br/>"
+            "<b>Perfiles</b><br/>"
+            f"{escape_text(describe_species_scope(species_scope, species_exports))}",
+            styles["header_meta"],
+        ),
+    ]
+    table = Table([[left, right]], colWidths=[168 * mm, 90 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+                ("LINEBEFORE", (1, 0), (1, 0), 1.2, SEA),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    return table
+
+
+def build_context_callout(fishing_context: dict, styles: dict[str, ParagraphStyle]) -> Table:
+    text = fishing_context.get("interpretation", "")
+    distance = fishing_context.get("casting_distance_m", "s/d")
+    zone = fishing_context.get("target_zone_label", "s/d")
     data = [
         [
-            cell("Score base 24 h", styles["cell_bold"]),
-            cell(str(target.get("score", "s/d")), styles["cell"]),
-            cell("Categoria", styles["cell_bold"]),
-            cell(escape_text(target.get("category", "s/d")), styles["cell"]),
-            cell("Mejor ventana", styles["cell_bold"]),
-            cell(format_hour(target.get("best_datetime")), styles["cell"]),
+            Paragraph("Contexto de pesca", styles["cell_bold"]),
+            Paragraph(escape_text(text), styles["cell"]),
         ],
         [
-            cell("Ahora", styles["cell_bold"]),
-            cell(str(target.get("current_score", summary.get("current_score", "s/d"))), styles["cell"]),
-            cell("Alerta", styles["cell_bold"]),
-            cell(escape_text(first_alert(target.get("safety_alerts") or summary.get("safety_alerts") or [])), styles["cell"]),
-            cell("Recomendacion", styles["cell_bold"]),
-            cell(escape_text(target.get("recommendation", summary.get("recommendation", "s/d"))), styles["cell"]),
+            Paragraph("Lance / zona", styles["cell_bold"]),
+            Paragraph(f"{escape_text(distance)} m - {escape_text(zone)}", styles["cell"]),
         ],
     ]
-    table = Table(data, colWidths=[26 * mm, 16 * mm, 22 * mm, 24 * mm, 28 * mm, 130 * mm])
-    table.setStyle(base_table_style(header=False))
+    table = Table(data, colWidths=[34 * mm, 224 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), PALE_SEA),
+                ("BOX", (0, 0), (-1, -1), 0.5, SEA),
+                ("LINEBEFORE", (0, 0), (0, -1), 3, SEA),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return table
+
+
+def section_title(text: str, styles: dict[str, ParagraphStyle]) -> Table:
+    table = Table([[Paragraph(escape_text(text), styles["section"])]], colWidths=[258 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+                ("LINEBEFORE", (0, 0), (0, 0), 4, SEA),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return table
+
+
+def build_profile_badge(export: ExportSpecies, styles: dict[str, ParagraphStyle]) -> Table:
+    score = export.summary.get("score", "s/d")
+    category = export.summary.get("category", "s/d")
+    accent, pale = quality_palette(category, score)
+    data = [[
+        Paragraph(f"Score 24 h: {escape_text(score)}", styles["cell_inverse"]),
+        Paragraph(escape_text(category), styles["cell_inverse"]),
+        Paragraph(f"Mejor ventana: {escape_text(format_hour(export.summary.get('best_datetime')))}", styles["cell_bold"]),
+    ]]
+    table = Table(data, colWidths=[32 * mm, 34 * mm, 192 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (1, 0), accent),
+                ("BACKGROUND", (2, 0), (2, 0), pale),
+                ("BOX", (0, 0), (-1, -1), 0.4, LINE),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return table
+
+
+def metric_card(
+    label: str,
+    value: str,
+    styles: dict[str, ParagraphStyle],
+    width: float,
+    accent: colors.Color = SEA,
+    background: colors.Color = PANEL,
+) -> Table:
+    data = [
+        [Paragraph(escape_text(label), styles["metric_label"])],
+        [Paragraph(escape_text(value), styles["metric_value"])],
+    ]
+    table = Table(data, colWidths=[width])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), background),
+                ("LINEABOVE", (0, 0), (-1, 0), 3, accent),
+                ("BOX", (0, 0), (-1, -1), 0.4, LINE),
+                ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return table
+
+
+def build_summary_table(summary: dict, species_exports: list[ExportSpecies], styles: dict[str, ParagraphStyle]) -> Table:
+    target = species_exports[0].summary if len(species_exports) == 1 else summary
+    score = target.get("score", "s/d")
+    category = target.get("category", "s/d")
+    accent, pale = quality_palette(category, score)
+    current_score = target.get("current_score", summary.get("current_score", "s/d"))
+    data = [
+        [
+            metric_card("Score 24 h", str(score), styles, 42 * mm, accent, pale),
+            metric_card("Categoria", str(category), styles, 52 * mm, accent, pale),
+            metric_card("Mejor ventana", format_hour(target.get("best_datetime")), styles, 76 * mm, TEAL, PALE_SEA),
+            metric_card("Ahora", str(current_score), styles, 88 * mm, *quality_palette(None, current_score)),
+        ],
+        [
+            Paragraph("Alerta", styles["cell_bold"]),
+            Paragraph(escape_text(first_alert(target.get("safety_alerts") or summary.get("safety_alerts") or [])), styles["cell"]),
+            Paragraph("Recomendacion", styles["cell_bold"]),
+            Paragraph(escape_text(target.get("recommendation", summary.get("recommendation", "s/d"))), styles["cell"]),
+        ],
+    ]
+    table = Table(data, colWidths=[42 * mm, 52 * mm, 76 * mm, 88 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 1), (-1, 1), colors.white),
+                ("BOX", (0, 1), (-1, 1), 0.4, LINE),
+                ("LINEBEFORE", (0, 1), (0, 1), 3, ORANGE),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, 0), 0),
+                ("RIGHTPADDING", (0, 0), (-1, 0), 4),
+                ("TOPPADDING", (0, 0), (-1, 0), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+                ("LEFTPADDING", (0, 1), (-1, 1), 7),
+                ("RIGHTPADDING", (0, 1), (-1, 1), 7),
+                ("TOPPADDING", (0, 1), (-1, 1), 6),
+                ("BOTTOMPADDING", (0, 1), (-1, 1), 6),
+            ]
+        )
+    )
     return table
 
 
 def build_conditions_table(rows: list[dict], styles: dict[str, ParagraphStyle]) -> Table:
     data = [[
-        cell("Hora", styles["cell_bold"]),
-        cell("Cielo", styles["cell_bold"]),
-        cell("Viento", styles["cell_bold"]),
-        cell("Lluvia", styles["cell_bold"]),
-        cell("Mar", styles["cell_bold"]),
-        cell("Marea", styles["cell_bold"]),
-        cell("Lectura", styles["cell_bold"]),
+        header_cell("Hora", styles),
+        header_cell("Cielo", styles),
+        header_cell("Viento", styles),
+        header_cell("Lluvia", styles),
+        header_cell("Mar", styles),
+        header_cell("Marea", styles),
+        header_cell("Lectura", styles),
     ]]
     for row in rows:
         data.append(
             [
-                cell(format_hour(row.get("datetime")), styles["cell"]),
-                cell(escape_text(row.get("weather_description", "s/d")), styles["cell"]),
+                cell(format_row_hour(row), styles["cell"]),
+                cell(row.get("weather_description", "s/d"), styles["cell"]),
                 cell(f"{fmt(row.get('wind_speed_ms'), 'm/s')} / racha {fmt(row.get('wind_gust_ms'), 'm/s')}", styles["cell"]),
                 cell(f"{fmt(row.get('precipitation_mm'), 'mm')} / {fmt(row.get('precipitation_probability'), '%')}", styles["cell"]),
                 cell(f"{fmt(row.get('wave_height_m'), 'm')} / {fmt(row.get('wave_period_s'), 's')}", styles["cell"]),
-                cell(f"{escape_text(row.get('tide_state', 's/d'))} / {fmt(row.get('tide_height_m'), 'm')}", styles["cell"]),
-                cell(escape_text(human_row_reading(row)), styles["cell"]),
+                cell(f"{row.get('tide_state', 's/d')} / {fmt(row.get('tide_height_m'), 'm')}", styles["cell"]),
+                cell(human_row_reading(row), styles["cell"]),
             ]
         )
     table = Table(data, colWidths=[24 * mm, 34 * mm, 32 * mm, 25 * mm, 25 * mm, 28 * mm, 90 * mm], repeatRows=1)
-    table.setStyle(base_table_style())
+    table.setStyle(base_table_style(row_count=len(data)))
     return table
 
 
 def build_species_summary_table(species_exports: list[ExportSpecies], styles: dict[str, ParagraphStyle]) -> Table:
     data = [[
-        cell("Perfil", styles["cell_bold"]),
-        cell("Score", styles["cell_bold"]),
-        cell("Categoria", styles["cell_bold"]),
-        cell("Mejor ventana", styles["cell_bold"]),
-        cell("Mes", styles["cell_bold"]),
+        header_cell("Perfil", styles),
+        header_cell("Score", styles),
+        header_cell("Categoria", styles),
+        header_cell("Mejor ventana", styles),
+        header_cell("Mes", styles),
     ]]
     for export in species_exports:
         factor = export.summary.get("seasonality_factor")
         month_text = "100%" if export.species_id == "general" else f"{int(round((factor or 0) * 100))}%"
         data.append(
             [
-                cell(escape_text(export.name), styles["cell"]),
-                cell(str(export.summary.get("score", "s/d")), styles["cell"]),
-                cell(escape_text(export.summary.get("category", "s/d")), styles["cell"]),
+                cell(export.name, styles["cell"]),
+                cell(str(export.summary.get("score", "s/d")), styles["cell_inverse"]),
+                cell(export.summary.get("category", "s/d"), styles["cell_inverse"]),
                 cell(format_hour(export.summary.get("best_datetime")), styles["cell"]),
                 cell(month_text, styles["cell"]),
             ]
         )
     table = Table(data, colWidths=[65 * mm, 18 * mm, 28 * mm, 34 * mm, 18 * mm], repeatRows=1)
-    table.setStyle(base_table_style())
+    style = base_table_style(row_count=len(data))
+    for row_index, export in enumerate(species_exports, start=1):
+        accent, _ = quality_palette(export.summary.get("category"), export.summary.get("score"))
+        style.add("BACKGROUND", (1, row_index), (2, row_index), accent)
+    table.setStyle(style)
     return table
 
 
 def build_species_rows_table(rows: list[dict], export: ExportSpecies, styles: dict[str, ParagraphStyle]) -> Table:
     data = [[
-        cell("Hora", styles["cell_bold"]),
-        cell("Score", styles["cell_bold"]),
-        cell("Categoria", styles["cell_bold"]),
-        cell("Lectura", styles["cell_bold"]),
+        header_cell("Hora", styles),
+        header_cell("Score", styles),
+        header_cell("Categoria", styles),
+        header_cell("Lectura", styles),
     ]]
     for row in rows:
         score_data = row_score(row, export.species_id)
         data.append(
             [
-                cell(format_hour(row.get("datetime")), styles["cell"]),
-                cell(str(score_data.get("score", "s/d")), styles["cell"]),
-                cell(escape_text(score_data.get("category", "s/d")), styles["cell"]),
-                cell(escape_text(score_data.get("explanation") or human_row_reading(row)), styles["cell"]),
+                cell(format_row_hour(row), styles["cell"]),
+                cell(str(score_data.get("score", "s/d")), styles["cell_inverse"]),
+                cell(score_data.get("category", "s/d"), styles["cell_inverse"]),
+                cell(score_data.get("explanation") or human_row_reading(row), styles["cell"]),
             ]
         )
     table = Table(data, colWidths=[28 * mm, 18 * mm, 24 * mm, 180 * mm], repeatRows=1)
-    table.setStyle(base_table_style())
+    style = base_table_style(row_count=len(data))
+    for row_index, row in enumerate(rows, start=1):
+        score_data = row_score(row, export.species_id)
+        accent, _ = quality_palette(score_data.get("category"), score_data.get("score"))
+        style.add("BACKGROUND", (1, row_index), (2, row_index), accent)
+    table.setStyle(style)
     return table
 
 
-def base_table_style(header: bool = True) -> TableStyle:
+def base_table_style(header: bool = True, row_count: int | None = None) -> TableStyle:
     commands = [
-        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d8e0dd")),
+        ("GRID", (0, 0), (-1, -1), 0.35, LINE),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
+    first_data_row = 1 if header else 0
+    if row_count is None or row_count > first_data_row:
+        commands.append(("ROWBACKGROUNDS", (0, first_data_row), (-1, -1), [colors.white, PANEL]))
     if header:
         commands.extend(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eaf0ee")),
+                ("BACKGROUND", (0, 0), (-1, 0), NAVY),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("LINEBELOW", (0, 0), (-1, 0), 1.0, SEA),
             ]
         )
     return TableStyle(commands)
 
 
-def row_matches_interval(value: str | None, interval_hours: int) -> bool:
-    if interval_hours <= 1 or not value:
-        return True
-    return datetime.fromisoformat(value).hour % interval_hours == 0
+def quality_palette(category: str | None, score: object = None) -> tuple[colors.Color, colors.Color]:
+    key = quality_key(category, score)
+    return {
+        "great": (TEAL, PALE_SEA),
+        "good": (GREEN, PALE_GREEN),
+        "regular": (ORANGE, PALE_ORANGE),
+        "bad": (RED, PALE_RED),
+    }.get(key, (NEUTRAL, PALE_NEUTRAL))
+
+
+def quality_key(category: str | None, score: object = None) -> str:
+    normalized = str(category or "").lower()
+    if "muy" in normalized:
+        return "great"
+    if "buena" in normalized:
+        return "good"
+    if "regular" in normalized:
+        return "regular"
+    if "mala" in normalized:
+        return "bad"
+
+    numeric = numeric_score(score)
+    if numeric is None:
+        return "neutral"
+    if numeric <= 39:
+        return "bad"
+    if numeric <= 59:
+        return "regular"
+    if numeric <= 79:
+        return "good"
+    return "great"
+
+
+def numeric_score(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def interval_start(moment: datetime, interval_hours: int) -> datetime:
+    hour = (moment.hour // interval_hours) * interval_hours
+    return moment.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+def rounded_average(rows: list[dict], key: str, digits: int) -> float | int | None:
+    values = [float(row[key]) for row in rows if isinstance(row.get(key), int | float)]
+    if not values:
+        return None
+    value = round(sum(values) / len(values), digits)
+    return int(value) if digits == 0 else value
+
+
+def rounded_direction(rows: list[dict], key: str) -> int | None:
+    values = [float(row[key]) for row in rows if isinstance(row.get(key), int | float)]
+    if not values:
+        return None
+    x = sum(cos(radians(value)) for value in values) / len(values)
+    y = sum(sin(radians(value)) for value in values) / len(values)
+    if abs(x) < 1e-9 and abs(y) < 1e-9:
+        return None
+    direction = round(degrees(atan2(y, x)) % 360)
+    return 0 if direction >= 360 else int(direction)
+
+
+def most_common(rows: list[dict], key: str) -> object | None:
+    values = [row.get(key) for row in rows if row.get(key) is not None]
+    if not values:
+        return None
+    return Counter(values).most_common(1)[0][0]
+
+
+def unique_items(rows: list[dict], key: str) -> list:
+    seen = []
+    for row in rows:
+        values = row.get(key) or []
+        for value in values:
+            if value not in seen:
+                seen.append(value)
+    return seen
+
+
+def average_mapping(rows: list[dict], key: str, digits: int) -> dict:
+    nested_keys = {
+        nested_key
+        for row in rows
+        for nested_key in (row.get(key) or {})
+        if isinstance((row.get(key) or {}).get(nested_key), int | float)
+    }
+    return {
+        nested_key: rounded_average([row.get(key) or {} for row in rows], nested_key, digits)
+        for nested_key in sorted(nested_keys)
+    }
+
+
+def aggregate_species_scores(rows: list[dict]) -> dict:
+    species_ids = {
+        species_id
+        for row in rows
+        for species_id in (row.get("species_scores") or {})
+    }
+    aggregated = {}
+    for species_id in sorted(species_ids):
+        score_rows = [
+            row["species_scores"][species_id]
+            for row in rows
+            if species_id in (row.get("species_scores") or {})
+        ]
+        if not score_rows:
+            continue
+        item = dict(score_rows[0])
+        score = rounded_average(score_rows, "score", 0)
+        item["score"] = score
+        if score is not None:
+            item["category"] = score_category(int(score))
+        item["base_score"] = rounded_average(score_rows, "base_score", 0)
+        item["seasonality_factor"] = rounded_average(score_rows, "seasonality_factor", 2)
+        item["method_factor"] = rounded_average(score_rows, "method_factor", 3)
+        item["distance_factor"] = rounded_average(score_rows, "distance_factor", 3)
+        item["target_zone_factor"] = rounded_average(score_rows, "target_zone_factor", 3)
+        item["spot_factor"] = rounded_average(score_rows, "spot_factor", 3)
+        item["factor_scores"] = average_mapping(score_rows, "factor_scores", 3)
+        item["safety_alerts"] = unique_items(score_rows, "safety_alerts")
+        item["missing_fields"] = unique_items(score_rows, "missing_fields")
+        item["explanation"] = f"Score medio del tramo calculado con {len(score_rows)} hora(s)."
+        aggregated[species_id] = item
+    return aggregated
 
 
 def row_day_key(value: str | None) -> str:
@@ -376,6 +833,20 @@ def format_hour(value: str | None) -> str:
     return datetime.fromisoformat(value).strftime("%d/%m %H:%M")
 
 
+def format_row_hour(row: dict) -> str:
+    start_value = row.get("datetime")
+    if not start_value:
+        return "s/d"
+    start = datetime.fromisoformat(start_value)
+    end_value = row.get("period_end_datetime")
+    if not end_value:
+        return start.strftime("%d/%m %H:%M")
+    end = datetime.fromisoformat(end_value)
+    if start.date() == end.date():
+        return f"{start:%d/%m %H:%M}-{end:%H:%M}"
+    return f"{start:%d/%m %H:%M}-{end:%d/%m %H:%M}"
+
+
 def format_generated_at(value: str | None) -> str:
     if not value:
         return "s/d"
@@ -394,12 +865,16 @@ def first_alert(alerts: list[str]) -> str:
     return alerts[0]
 
 
-def cell(text: str, style: ParagraphStyle) -> Paragraph:
+def header_cell(text: str, styles: dict[str, ParagraphStyle]) -> Paragraph:
+    return Paragraph(escape_text(text), styles["table_header"])
+
+
+def cell(text: object, style: ParagraphStyle) -> Paragraph:
     return Paragraph(escape_text(text), style)
 
 
-def escape_text(value: str | None) -> str:
-    text = str(value or "")
+def escape_text(value: object) -> str:
+    text = "" if value is None else str(value)
     return (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")

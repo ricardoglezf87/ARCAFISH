@@ -174,6 +174,51 @@ textarea {
   background: #fbfdfc;
 }
 
+.spot-config-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.spot-config-form {
+  display: grid;
+  gap: 10px;
+}
+
+.method-config-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.method-config-group legend {
+  padding: 0 4px;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.method-config-group label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.method-config-group select,
+.method-config-group input {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px;
+  color: var(--ink);
+  background: #fbfdfc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
 .form-coordinates {
   color: var(--muted);
   font-size: 0.82rem;
@@ -541,6 +586,22 @@ textarea {
   text-align: center;
 }
 
+.species-card-score.bad {
+  background: var(--bad);
+}
+
+.species-card-score.regular {
+  background: var(--regular);
+}
+
+.species-card-score.good {
+  background: var(--good);
+}
+
+.species-card-score.great {
+  background: var(--great);
+}
+
 .species-card-meta {
   color: var(--muted);
   font-size: 0.78rem;
@@ -565,6 +626,70 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.fishing-context-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.fishing-context-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.field-control {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.field-control select,
+.field-control input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: #fbfdfc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.distance-field {
+  grid-column: span 2;
+}
+
+.distance-inputs {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 74px auto;
+  gap: 8px;
+  align-items: center;
+  color: var(--ink);
+}
+
+.distance-inputs input[type="range"] {
+  padding: 0;
+}
+
+.context-reading {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.context-reading p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.45;
 }
 
 .summary-grid {
@@ -628,6 +753,12 @@ textarea {
 
 .summary-copy p {
   margin: 0 0 10px;
+}
+
+.summary-detail {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .summary-stats {
@@ -770,6 +901,32 @@ tr:last-child td {
   border-bottom: 0;
 }
 
+.current-forecast-row td {
+  background: #fff7df;
+  border-top: 2px solid #d4911f;
+  border-bottom: 2px solid #d4911f;
+}
+
+.current-forecast-row td:first-child {
+  border-left: 5px solid #d4911f;
+  color: #173247;
+  font-weight: 800;
+}
+
+.current-row-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin: 0 8px 4px 0;
+  padding: 2px 7px;
+  color: #ffffff;
+  background: #173247;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .hour-score {
   width: 48px;
   display: inline-flex;
@@ -824,6 +981,10 @@ tr:last-child td {
   .forecast-layout {
     grid-template-columns: 1fr;
   }
+
+  .fishing-context-grid {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
@@ -852,5 +1013,15 @@ tr:last-child td {
 
   .export-actions {
     width: 100%;
+  }
+
+  .fishing-context-grid,
+  .distance-field {
+    grid-template-columns: 1fr;
+    grid-column: auto;
+  }
+
+  .distance-inputs {
+    grid-template-columns: minmax(0, 1fr) 72px auto;
   }
 }

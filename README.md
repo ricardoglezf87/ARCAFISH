@@ -28,9 +28,9 @@ copy .env.example .env
 uvicorn app.main:app --reload
 ```
 
-Abre `http://127.0.0.1:8000`.
+Abre `http://127.0.0.1:8010`.
 
-En Windows tambien puedes ejecutar `run_arcafish.bat`. El script crea `.venv` si hace falta, instala dependencias, crea `.env` desde `.env.example`, abre el navegador y arranca el servidor.
+En Windows tambien puedes ejecutar `run_arcafish.bat`. El script crea `.venv` si hace falta, instala dependencias, crea `.env` desde `.env.example`, abre el navegador y arranca el servidor. Por defecto usa el puerto `8010`; puedes cambiarlo definiendo `ARCAFISH_PORT` antes de ejecutar el BAT.
 
 ## Uso rapido
 

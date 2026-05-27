@@ -2,23 +2,47 @@ const ForecastUI = (() => {
   const panelId = "forecast-panel";
   const state = {
     forecast: null,
+    spotId: null,
     selectedSpecies: "general",
     selectedDay: "all",
-    intervalHours: 3
+    intervalHours: 3,
+    fishingContext: {
+      fishingMethod: "float",
+      castingDistanceM: 20
+    }
   };
+  const averageFields = {
+    wind_speed_ms: 1,
+    wind_gust_ms: 1,
+    temperature_c: 1,
+    precipitation_mm: 1,
+    precipitation_probability: 0,
+    pressure_hpa: 0,
+    pressure_trend_hpa: 1,
+    cloud_cover_percent: 0,
+    wave_height_m: 1,
+    wave_period_s: 0,
+    sea_surface_temperature_c: 1,
+    tide_height_m: 2,
+    fishing_score: 0
+  };
+  const directionFields = ["wind_direction_deg", "wave_direction_deg"];
 
-  async function loadForecast(spotId) {
+  async function loadForecast(spotId, options = {}) {
+    state.spotId = spotId;
     const panel = document.getElementById(panelId);
     panel.innerHTML = `<div class="forecast-empty"><h2>Pronostico</h2><p>Cargando prevision...</p></div>`;
     try {
-      const response = await fetch(`/api/spots/${spotId}/forecast`);
+      const response = await fetch(`/api/spots/${spotId}/forecast?${forecastQueryParams().toString()}`);
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: "No se pudo obtener el pronostico." }));
         throw new Error(error.detail || "No se pudo obtener el pronostico.");
       }
       state.forecast = await response.json();
-      state.selectedSpecies = "general";
-      state.selectedDay = "all";
+      if (!options.preserveView) {
+        state.selectedSpecies = "general";
+        state.selectedDay = "all";
+      }
       renderForecast();
       return state.forecast;
     } catch (error) {
@@ -29,6 +53,7 @@ const ForecastUI = (() => {
 
   function clear() {
     state.forecast = null;
+    state.spotId = null;
     state.selectedSpecies = "general";
     state.selectedDay = "all";
     const panel = document.getElementById(panelId);
@@ -67,6 +92,8 @@ const ForecastUI = (() => {
             <div class="forecast-badges">${cached}<span class="quality-badge ${quality}">${escapeHtml(summary.category)}</span></div>
           </div>
 
+          ${renderFishingContextControls(forecast)}
+
           <div class="summary-grid">
             <div class="score-tile ${quality}">
               <div class="score-eyebrow">${escapeHtml(summaryLabel())}</div>
@@ -75,6 +102,7 @@ const ForecastUI = (() => {
             </div>
             <div class="summary-copy">
               <p><strong>${escapeHtml(summary.recommendation)}</strong></p>
+              ${summary.best_explanation ? `<p class="summary-detail">${escapeHtml(summary.best_explanation)}</p>` : ""}
               <div class="summary-stats">
                 <span class="meta-pill">Ahora ${forecast.summary.current_score}</span>
                 <span class="meta-pill">Mejor ventana ${summary.best_score ?? summary.score}</span>
@@ -108,6 +136,7 @@ const ForecastUI = (() => {
     `;
 
     bindSpeciesButtons();
+    bindFishingContextControls();
     bindDayButtons();
     bindIntervalControl();
     bindExportButtons();
@@ -126,6 +155,80 @@ const ForecastUI = (() => {
         </button>
       `;
     }).join("");
+  }
+
+  function renderFishingContextControls(forecast) {
+    const context = forecast.fishing_context || forecast.meta?.fishing_context || {};
+    const distance = Number(context.casting_distance_m ?? state.fishingContext.castingDistanceM);
+    return `
+      <section class="fishing-context-panel" aria-label="Contexto de pesca">
+        <div class="fishing-context-grid">
+          <label class="field-control" for="fishing-method">
+            <span>Modalidad</span>
+            <select id="fishing-method">
+              ${option("float", "Boya", state.fishingContext.fishingMethod)}
+              ${option("bottom", "Fondo", state.fishingContext.fishingMethod)}
+              ${option("spinning", "Spinning / rockfishing", state.fishingContext.fishingMethod)}
+            </select>
+          </label>
+
+          <label class="field-control distance-field" for="casting-distance">
+            <span>Distancia de lance desde costa</span>
+            <div class="distance-inputs">
+              <input id="casting-distance" type="range" min="0" max="150" step="1" value="${distance}">
+              <input id="casting-distance-number" type="number" min="0" max="200" step="1" value="${distance}">
+              <span>m</span>
+            </div>
+          </label>
+
+        </div>
+
+        <div class="context-reading">
+          <p>${escapeHtml(context.interpretation || fishingContextMessage())}</p>
+          <div class="summary-stats">
+            <span class="meta-pill">Zona ${escapeHtml(context.target_zone_label || "s/d")}</span>
+            <span class="meta-pill">Columna ${escapeHtml(waterColumnLabel(context.water_column))}</span>
+            <span class="meta-pill">Lance ${escapeHtml(String(context.casting_distance_m ?? distance))} m</span>
+            ${context.spot_type ? `<span class="meta-pill">${escapeHtml(spotTypeLabel(context.spot_type))}</span>` : ""}
+            ${context.spot_exposure ? `<span class="meta-pill">${escapeHtml(exposureLabel(context.spot_exposure))}</span>` : ""}
+            ${context.water_depth_estimate_m !== null && context.water_depth_estimate_m !== undefined ? `<span class="meta-pill">Prof. ${escapeHtml(String(context.water_depth_estimate_m))} m</span>` : ""}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function bindFishingContextControls() {
+    const method = document.getElementById("fishing-method");
+    const distance = document.getElementById("casting-distance");
+    const distanceNumber = document.getElementById("casting-distance-number");
+    if (!method || !distance || !distanceNumber) return;
+
+    const reload = () => reloadForecastWithContext();
+    method.addEventListener("change", () => {
+      state.fishingContext.fishingMethod = method.value;
+      applyMethodDistanceDefault(method.value);
+      reload();
+    });
+    distance.addEventListener("input", () => {
+      distanceNumber.value = distance.value;
+    });
+    distance.addEventListener("change", () => {
+      state.fishingContext.castingDistanceM = clampDistance(distance.value);
+      reload();
+    });
+    distanceNumber.addEventListener("change", () => {
+      const nextDistance = clampDistance(distanceNumber.value);
+      state.fishingContext.castingDistanceM = nextDistance;
+      distance.value = String(Math.min(150, nextDistance));
+      distanceNumber.value = String(nextDistance);
+      reload();
+    });
+  }
+
+  function reloadForecastWithContext() {
+    if (!state.spotId) return;
+    loadForecast(state.spotId, { preserveView: true });
   }
 
   function bindSpeciesButtons() {
@@ -167,6 +270,59 @@ const ForecastUI = (() => {
     }
   }
 
+  function forecastQueryParams() {
+    const params = new URLSearchParams({
+      fishing_method: state.fishingContext.fishingMethod,
+      casting_distance_m: String(state.fishingContext.castingDistanceM)
+    });
+    return params;
+  }
+
+  function option(value, label, selectedValue) {
+    return `<option value="${escapeHtml(value)}"${value === selectedValue ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  }
+
+  function applyMethodDistanceDefault(method) {
+    const current = Number(state.fishingContext.castingDistanceM);
+    if (method === "float" && (current > 30 || current < 0)) {
+      state.fishingContext.castingDistanceM = 20;
+    } else if (method === "bottom" && current < 50) {
+      state.fishingContext.castingDistanceM = 80;
+    } else if (method === "spinning" && current > 80) {
+      state.fishingContext.castingDistanceM = 35;
+    }
+  }
+
+  function clampDistance(value) {
+    const parsed = Number.parseFloat(value);
+    if (Number.isNaN(parsed)) return 20;
+    return Math.min(200, Math.max(0, Math.round(parsed)));
+  }
+
+  function fishingContextMessage() {
+    if (state.fishingContext.fishingMethod === "bottom") {
+      return "Estas pescando a fondo. Los lances largos favorecen especies de zonas exteriores y dependen mas de marea, corriente, fondo y profundidad estimada.";
+    }
+    return "Estas pescando cerca de costa. La distancia de lance se mide desde la orilla, no como profundidad.";
+  }
+
+  function spotTypeLabel(value) {
+    const labels = { rocky: "Roca", mixed: "Mixto", sandy: "Arena", reef: "Arrecife", harbor: "Puerto" };
+    return labels[value] || value;
+  }
+
+  function exposureLabel(value) {
+    const labels = { sheltered: "Resguardado", semi_exposed: "Semi expuesto", exposed: "Expuesto" };
+    return labels[value] || value;
+  }
+
+  function waterColumnLabel(value) {
+    if (value === "surface") return "superficie";
+    if (value === "mid_water") return "media agua";
+    if (value === "bottom") return "fondo";
+    return "s/d";
+  }
+
   function currentSummary() {
     if (state.selectedSpecies === "general") {
       return state.forecast.summary;
@@ -193,6 +349,7 @@ const ForecastUI = (() => {
       return `<div class="forecast-error">No hay datos horarios suficientes.</div>`;
     }
     const visibleRows = filteredRows(rows);
+    const currentRowDatetime = currentVisibleRowDatetime(visibleRows);
     return `
       <div class="table-toolbar">
         <div class="day-tabs">${renderDayTabs(rows)}</div>
@@ -226,7 +383,7 @@ const ForecastUI = (() => {
             </tr>
           </thead>
           <tbody>
-            ${visibleRows.map(renderRow).join("")}
+            ${visibleRows.map((row) => renderRow(row, row.datetime === currentRowDatetime)).join("")}
           </tbody>
         </table>
       </div>
@@ -245,7 +402,7 @@ const ForecastUI = (() => {
     `).join("");
   }
 
-  function renderRow(row) {
+  function renderRow(row, isCurrent = false) {
     const scoreBlock = getRowScore(row);
     const quality = qualityClass(scoreBlock.category);
     const wind = `${value(row.wind_speed_ms, "m/s")} - ${compass(row.wind_direction_deg)}<br><span class="small-muted">Racha ${value(row.wind_gust_ms, "m/s")}</span>`;
@@ -253,10 +410,14 @@ const ForecastUI = (() => {
     const sea = `${value(row.wave_height_m, "m")} - ${value(row.wave_period_s, "s")}<br><span class="small-muted">Agua ${value(row.sea_surface_temperature_c, "C")}</span>`;
     const tide = `${escapeHtml(row.tide_state || "sin datos")}<br><span class="small-muted">${value(row.tide_height_m, "m")}</span>`;
     const pressure = `${value(row.pressure_hpa, "hPa")}${row.pressure_trend_hpa === null ? "" : ` (${row.pressure_trend_hpa > 0 ? "+" : ""}${row.pressure_trend_hpa})`}`;
+    const currentBadge = isCurrent ? `<span class="current-row-pill">Ahora</span> ` : "";
+    const reading = state.selectedSpecies === "general"
+      ? humanReading(row)
+      : (scoreBlock.explanation || humanReading(row));
 
     return `
-      <tr>
-        <td>${formatDateTime(row.datetime)}</td>
+      <tr class="${isCurrent ? "current-forecast-row" : ""}"${isCurrent ? ` aria-current="time"` : ""}>
+        <td>${currentBadge}${formatDateTime(row.datetime, row.period_end_datetime)}</td>
         <td>${escapeHtml(row.weather_description || "Sin datos")}<br><span class="small-muted">${pressure}</span></td>
         <td><span class="hour-score ${quality}">${scoreBlock.score}</span></td>
         <td>${wind}</td>
@@ -265,7 +426,7 @@ const ForecastUI = (() => {
         <td>${sea}</td>
         <td>${tide}</td>
         <td>${escapeHtml(row.moon_phase || "sin datos")}</td>
-        <td>${escapeHtml(humanReading(row))}</td>
+        <td>${escapeHtml(reading)}</td>
       </tr>
     `;
   }
@@ -294,7 +455,34 @@ const ForecastUI = (() => {
     const scopedRows = state.selectedDay === "all"
       ? rows
       : rows.filter((row) => rowDayKey(row.datetime) === state.selectedDay);
-    return scopedRows.filter((row) => rowMatchesInterval(row));
+    return aggregateRows(scopedRows, clampInterval(state.intervalHours));
+  }
+
+  function currentVisibleRowDatetime(rows) {
+    if (!rows.length) return null;
+    const now = new Date();
+    if (Number.isNaN(now.getTime())) return null;
+    for (let index = 0; index < rows.length; index += 1) {
+      const rowStart = new Date(rows[index].datetime);
+      const rowEnd = rows[index].period_end_datetime
+        ? new Date(rows[index].period_end_datetime)
+        : rows[index + 1] ? new Date(rows[index + 1].datetime) : null;
+      if (Number.isNaN(rowStart.getTime())) continue;
+      if (now < rowStart) {
+        return sameLocalDate(now, rowStart) ? rows[index].datetime : null;
+      }
+      if (rowEnd && Number.isNaN(rowEnd.getTime())) continue;
+      if (now >= rowStart && (!rowEnd || now < rowEnd)) {
+        return rows[index].datetime;
+      }
+    }
+    return null;
+  }
+
+  function sameLocalDate(first, second) {
+    return first.getFullYear() === second.getFullYear()
+      && first.getMonth() === second.getMonth()
+      && first.getDate() === second.getDate();
   }
 
   function listForecastDays(rows) {
@@ -314,11 +502,176 @@ const ForecastUI = (() => {
     }).format(date);
   }
 
-  function rowMatchesInterval(row) {
-    const interval = clampInterval(state.intervalHours);
-    if (interval <= 1) return true;
-    const date = new Date(row.datetime);
-    return date.getHours() % interval === 0;
+  function aggregateRows(rows, interval) {
+    if (interval <= 1) return rows;
+    const groups = new Map();
+    for (const row of rows) {
+      const start = intervalStart(row.datetime, interval);
+      if (!start) continue;
+      const key = toLocalIso(start);
+      if (!groups.has(key)) {
+        groups.set(key, { start, rows: [] });
+      }
+      groups.get(key).rows.push(row);
+    }
+    return [...groups.values()]
+      .sort((a, b) => a.start - b.start)
+      .map((group) => aggregateInterval(group.start, group.rows, interval));
+  }
+
+  function intervalStart(value, interval) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const start = new Date(date);
+    start.setMinutes(0, 0, 0);
+    start.setHours(Math.floor(start.getHours() / interval) * interval);
+    return start;
+  }
+
+  function aggregateInterval(start, rows, interval) {
+    const first = rows[0] || {};
+    const end = new Date(start);
+    end.setHours(end.getHours() + interval);
+    const aggregate = {
+      ...first,
+      datetime: toLocalIso(start),
+      period_end_datetime: toLocalIso(end),
+      period_hours: interval,
+      sample_count: rows.length,
+      is_aggregate: true
+    };
+
+    for (const [field, digits] of Object.entries(averageFields)) {
+      aggregate[field] = roundedAverage(rows, field, digits);
+    }
+    for (const field of directionFields) {
+      aggregate[field] = roundedDirection(rows, field);
+    }
+
+    aggregate.weather_code = mostCommon(rows, "weather_code");
+    aggregate.weather_description = mostCommon(rows, "weather_description") || first.weather_description;
+    aggregate.tide_state = mostCommon(rows, "tide_state") || first.tide_state;
+    aggregate.moon_phase = mostCommon(rows, "moon_phase") || first.moon_phase;
+    aggregate.is_day = mostCommon(rows, "is_day");
+    aggregate.fishing_category = categoryForScore(aggregate.fishing_score);
+    aggregate.explanation = `Media del tramo calculada con ${rows.length} hora(s).`;
+    aggregate.safety_alerts = uniqueItems(rows, "safety_alerts");
+    aggregate.missing_fields = uniqueItems(rows, "missing_fields");
+    aggregate.factor_scores = averageMapping(rows, "factor_scores", 3);
+    aggregate.species_scores = aggregateSpeciesScores(rows);
+    return aggregate;
+  }
+
+  function roundedAverage(rows, field, digits) {
+    const values = rows
+      .map((row) => row[field])
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    if (!values.length) return null;
+    const factor = 10 ** digits;
+    const average = values.reduce((total, value) => total + value, 0) / values.length;
+    const rounded = Math.round(average * factor) / factor;
+    return digits === 0 ? Math.round(rounded) : rounded;
+  }
+
+  function roundedDirection(rows, field) {
+    const values = rows
+      .map((row) => row[field])
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    if (!values.length) return null;
+    const x = values.reduce((total, value) => total + Math.cos(value * Math.PI / 180), 0) / values.length;
+    const y = values.reduce((total, value) => total + Math.sin(value * Math.PI / 180), 0) / values.length;
+    if (Math.abs(x) < 1e-9 && Math.abs(y) < 1e-9) return null;
+    const degrees = Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360);
+    return degrees >= 360 ? 0 : degrees;
+  }
+
+  function mostCommon(rows, field) {
+    const counts = new Map();
+    for (const row of rows) {
+      const value = row[field];
+      if (value === null || value === undefined) continue;
+      const key = String(value);
+      const item = counts.get(key) || { value, count: 0 };
+      item.count += 1;
+      counts.set(key, item);
+    }
+    let best = null;
+    for (const item of counts.values()) {
+      if (!best || item.count > best.count) best = item;
+    }
+    return best ? best.value : null;
+  }
+
+  function uniqueItems(rows, field) {
+    const seen = new Set();
+    const items = [];
+    for (const row of rows) {
+      for (const value of row[field] || []) {
+        if (seen.has(value)) continue;
+        seen.add(value);
+        items.push(value);
+      }
+    }
+    return items;
+  }
+
+  function averageMapping(rows, field, digits) {
+    const keys = new Set();
+    for (const row of rows) {
+      const values = row[field] || {};
+      for (const [key, value] of Object.entries(values)) {
+        if (typeof value === "number" && Number.isFinite(value)) keys.add(key);
+      }
+    }
+    return [...keys].sort().reduce((result, key) => {
+      result[key] = roundedAverage(rows.map((row) => row[field] || {}), key, digits);
+      return result;
+    }, {});
+  }
+
+  function aggregateSpeciesScores(rows) {
+    const speciesIds = new Set();
+    for (const row of rows) {
+      for (const speciesId of Object.keys(row.species_scores || {})) {
+        speciesIds.add(speciesId);
+      }
+    }
+    return [...speciesIds].sort().reduce((result, speciesId) => {
+      const scoreRows = rows
+        .filter((row) => row.species_scores?.[speciesId])
+        .map((row) => row.species_scores[speciesId]);
+      if (!scoreRows.length) return result;
+      const score = roundedAverage(scoreRows, "score", 0);
+      result[speciesId] = {
+        ...scoreRows[0],
+        score,
+        category: categoryForScore(score),
+        base_score: roundedAverage(scoreRows, "base_score", 0),
+        seasonality_factor: roundedAverage(scoreRows, "seasonality_factor", 2),
+        method_factor: roundedAverage(scoreRows, "method_factor", 3),
+        distance_factor: roundedAverage(scoreRows, "distance_factor", 3),
+        target_zone_factor: roundedAverage(scoreRows, "target_zone_factor", 3),
+        spot_factor: roundedAverage(scoreRows, "spot_factor", 3),
+        factor_scores: averageMapping(scoreRows, "factor_scores", 3),
+        safety_alerts: uniqueItems(scoreRows, "safety_alerts"),
+        missing_fields: uniqueItems(scoreRows, "missing_fields"),
+        explanation: `Score medio del tramo calculado con ${scoreRows.length} hora(s).`
+      };
+      return result;
+    }, {});
+  }
+
+  function categoryForScore(score) {
+    if (score === null || score === undefined || Number.isNaN(score)) return "Mala";
+    if (score <= 39) return "Mala";
+    if (score <= 59) return "Regular";
+    if (score <= 79) return "Buena";
+    return "Muy buena";
+  }
+
+  function toLocalIso(date) {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
   }
 
   function clampInterval(value) {
@@ -335,6 +688,9 @@ const ForecastUI = (() => {
       species_id: state.selectedSpecies,
       interval_hours: String(clampInterval(state.intervalHours))
     });
+    for (const [key, value] of forecastQueryParams()) {
+      params.set(key, value);
+    }
     const url = `/api/spots/${state.forecast.spot.id}/forecast/export?${params.toString()}`;
     const link = document.createElement("a");
     link.href = url;
@@ -392,15 +748,24 @@ const ForecastUI = (() => {
     return `${raw}${unit ? ` ${unit}` : ""}`;
   }
 
-  function formatDateTime(value) {
+  function formatDateTime(value, endValue = null) {
     if (!value) return "s/d";
-    return new Intl.DateTimeFormat("es-ES", {
+    const start = new Date(value);
+    const formattedStart = new Intl.DateTimeFormat("es-ES", {
       weekday: "short",
       day: "2-digit",
       month: "2-digit",
       hour: "2-digit",
       minute: "2-digit"
-    }).format(new Date(value));
+    }).format(start);
+    if (!endValue) return formattedStart;
+    const end = new Date(endValue);
+    if (Number.isNaN(end.getTime())) return formattedStart;
+    const formattedEnd = new Intl.DateTimeFormat("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(end);
+    return `${formattedStart}-${formattedEnd}`;
   }
 
   function compass(degrees) {

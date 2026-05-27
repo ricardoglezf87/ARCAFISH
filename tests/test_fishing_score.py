@@ -1,6 +1,12 @@
 from datetime import datetime, timedelta, timezone
 
-from app.services.fishing_score import FishingConditions, calculate_fishing_score
+from app.services.fishing_score import (
+    FISHING_METHOD_LABELS,
+    FishingConditions,
+    build_fishing_context,
+    calculate_fishing_score,
+    calculate_target_zone,
+)
 
 
 def base_conditions(**overrides):
@@ -113,3 +119,60 @@ def test_seasonality_penalizes_dorado_in_winter_against_summer():
 
     assert january.seasonality_factor < august.seasonality_factor
     assert january.score < august.score
+
+
+def test_target_zone_is_calculated_from_horizontal_casting_distance():
+    context = build_fishing_context(
+        fishing_method="float",
+        casting_distance_m=18,
+        water_depth_estimate_m=80,
+    )
+
+    assert calculate_target_zone(4) == "shoreline"
+    assert calculate_target_zone(18) == "shore_break"
+    assert calculate_target_zone(80) == "outer_reef"
+    assert context.target_zone == "shore_break"
+    assert context.water_depth_estimate_m == 80
+
+
+def test_float_short_cast_favors_breakwater_species_and_penalizes_sama():
+    context = build_fishing_context(
+        fishing_method="float",
+        casting_distance_m=18,
+        spot_type="rocky",
+        shore_type="volcanic",
+        spot_exposure="semi_exposed",
+    )
+
+    sargo = calculate_fishing_score(base_conditions(), "sargo_chopa_roncador", context)
+    sama = calculate_fishing_score(base_conditions(), "bocinegro_sama", context)
+
+    assert sargo.distance_factor == 1.0
+    assert sama.distance_factor == 0.1
+    assert sargo.score > sama.score
+    assert "Muy compatible" in sargo.explanation
+    assert "Poco compatible" in sama.explanation
+
+
+def test_bottom_long_cast_favors_outer_zone_species():
+    short_context = build_fishing_context(fishing_method="float", casting_distance_m=18)
+    long_context = build_fishing_context(
+        fishing_method="bottom",
+        casting_distance_m=80,
+        spot_type="rocky",
+        shore_type="volcanic",
+        spot_exposure="semi_exposed",
+        water_depth_estimate_m=12,
+    )
+
+    short_sama = calculate_fishing_score(base_conditions(), "bocinegro_sama", short_context)
+    long_sama = calculate_fishing_score(base_conditions(), "bocinegro_sama", long_context)
+
+    assert long_context.target_zone == "outer_reef"
+    assert long_sama.distance_factor == 1.0
+    assert long_sama.score > short_sama.score
+
+
+def test_fishing_methods_are_float_bottom_and_spinning():
+    assert set(FISHING_METHOD_LABELS) == {"float", "bottom", "spinning"}
+    assert FISHING_METHOD_LABELS["spinning"] == "Spinning / rockfishing"
