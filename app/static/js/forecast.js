@@ -93,6 +93,7 @@ const ForecastUI = (() => {
           </div>
 
           ${renderFishingContextControls(forecast)}
+          ${renderSpeciesSelect(forecast)}
 
           <div class="summary-grid">
             <div class="score-tile ${quality}">
@@ -136,6 +137,7 @@ const ForecastUI = (() => {
     `;
 
     bindSpeciesButtons();
+    bindSpeciesSelect();
     bindFishingContextControls();
     bindDayButtons();
     bindIntervalControl();
@@ -157,6 +159,32 @@ const ForecastUI = (() => {
     }).join("");
   }
 
+  function renderSpeciesSelect(forecast) {
+    const profiles = forecast.meta?.species_profiles || [];
+    const generalSelected = state.selectedSpecies === "general" ? " selected" : "";
+    const options = [
+      `<option value="general"${generalSelected}>General costa - ${forecast.summary.score} (${escapeHtml(forecast.summary.category)})</option>`
+    ];
+    for (const profile of profiles) {
+      const speciesSummary = forecast.summary.species[profile.id];
+      if (!speciesSummary) continue;
+      const selected = state.selectedSpecies === profile.id ? " selected" : "";
+      options.push(
+        `<option value="${escapeHtml(profile.id)}"${selected}>${escapeHtml(profile.name)} - ${speciesSummary.score} (${escapeHtml(speciesSummary.category)})</option>`
+      );
+    }
+    return `
+      <section class="species-select-panel" aria-label="Seleccion de especie">
+        <label class="field-control" for="species-select">
+          <span>Especie</span>
+          <select id="species-select">
+            ${options.join("")}
+          </select>
+        </label>
+      </section>
+    `;
+  }
+
   function renderFishingContextControls(forecast) {
     const context = forecast.fishing_context || forecast.meta?.fishing_context || {};
     const distance = Number(context.casting_distance_m ?? state.fishingContext.castingDistanceM);
@@ -172,13 +200,11 @@ const ForecastUI = (() => {
             </select>
           </label>
 
-          <label class="field-control distance-field" for="casting-distance">
+          <label class="field-control" for="casting-distance">
             <span>Distancia de lance desde costa</span>
-            <div class="distance-inputs">
-              <input id="casting-distance" type="range" min="0" max="150" step="1" value="${distance}">
-              <input id="casting-distance-number" type="number" min="0" max="200" step="1" value="${distance}">
-              <span>m</span>
-            </div>
+            <select id="casting-distance">
+              ${renderDistanceOptions(distance)}
+            </select>
           </label>
 
         </div>
@@ -201,8 +227,7 @@ const ForecastUI = (() => {
   function bindFishingContextControls() {
     const method = document.getElementById("fishing-method");
     const distance = document.getElementById("casting-distance");
-    const distanceNumber = document.getElementById("casting-distance-number");
-    if (!method || !distance || !distanceNumber) return;
+    if (!method || !distance) return;
 
     const reload = () => reloadForecastWithContext();
     method.addEventListener("change", () => {
@@ -210,18 +235,8 @@ const ForecastUI = (() => {
       applyMethodDistanceDefault(method.value);
       reload();
     });
-    distance.addEventListener("input", () => {
-      distanceNumber.value = distance.value;
-    });
     distance.addEventListener("change", () => {
       state.fishingContext.castingDistanceM = clampDistance(distance.value);
-      reload();
-    });
-    distanceNumber.addEventListener("change", () => {
-      const nextDistance = clampDistance(distanceNumber.value);
-      state.fishingContext.castingDistanceM = nextDistance;
-      distance.value = String(Math.min(150, nextDistance));
-      distanceNumber.value = String(nextDistance);
       reload();
     });
   }
@@ -238,6 +253,15 @@ const ForecastUI = (() => {
         renderForecast();
       });
     }
+  }
+
+  function bindSpeciesSelect() {
+    const select = document.getElementById("species-select");
+    if (!select) return;
+    select.addEventListener("change", () => {
+      state.selectedSpecies = select.value || "general";
+      renderForecast();
+    });
   }
 
   function bindDayButtons() {
@@ -280,6 +304,13 @@ const ForecastUI = (() => {
 
   function option(value, label, selectedValue) {
     return `<option value="${escapeHtml(value)}"${value === selectedValue ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  }
+
+  function renderDistanceOptions(selectedDistance) {
+    const selected = clampDistance(selectedDistance);
+    const values = [...new Set([0, 10, 20, 30, 35, 40, 50, 60, 80, 100, 120, 150, 200, selected])]
+      .sort((first, second) => first - second);
+    return values.map((distance) => option(String(distance), `${distance} m`, String(selected))).join("");
   }
 
   function applyMethodDistanceDefault(method) {
