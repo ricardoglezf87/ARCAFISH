@@ -40,7 +40,6 @@ class OpenMeteoWeatherProvider:
                     "is_day",
                 ]
             ),
-            "daily": "sunrise,sunset",
         }
         async with httpx.AsyncClient(
             timeout=self.settings.http_timeout_seconds,

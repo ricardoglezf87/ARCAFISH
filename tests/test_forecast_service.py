@@ -1,7 +1,10 @@
+import asyncio
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from app.services.forecast_service import (
+    ForecastService,
     _current_or_first_row,
     _rows_for_next_24h,
     _summary_weights,
@@ -16,6 +19,33 @@ def _row(dt_text: str, score: int = 50) -> dict:
         "safety_alerts": [],
         "species_scores": {"general": {"score": score}},
     }
+
+
+class _DelayedProvider:
+    def __init__(self, name: str, probe: dict) -> None:
+        self.name = name
+        self.probe = probe
+
+    async def fetch(self, latitude: float, longitude: float, days: int) -> dict:
+        self.probe["active"] += 1
+        self.probe["max_active"] = max(self.probe["max_active"], self.probe["active"])
+        await asyncio.sleep(0.01)
+        self.probe["active"] -= 1
+        return {"provider": self.name, "latitude": latitude, "longitude": longitude, "days": days}
+
+
+def test_external_forecast_requests_run_concurrently():
+    probe = {"active": 0, "max_active": 0}
+    service = ForecastService(db=None)
+    service.weather_provider = _DelayedProvider("weather", probe)
+    service.marine_provider = _DelayedProvider("marine", probe)
+    spot = SimpleNamespace(latitude=28.1, longitude=-16.5)
+
+    weather, marine = asyncio.run(service._fetch_external_data(spot))
+
+    assert weather["provider"] == "weather"
+    assert marine["provider"] == "marine"
+    assert probe["max_active"] == 2
 
 
 def test_rows_for_next_24h_uses_real_24_hour_window():
