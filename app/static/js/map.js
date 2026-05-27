@@ -17,7 +17,8 @@ const MapApp = (() => {
     markerMeta: new Map(),
     selectedSpotId: null,
     pendingMarker: null,
-    mapVisible: false
+    mapVisible: false,
+    spotConfigVisible: false
   };
 
   function init() {
@@ -51,6 +52,14 @@ const MapApp = (() => {
     document.getElementById("cancel-spot").addEventListener("click", closeSpotForm);
     document.getElementById("refresh-spots").addEventListener("click", loadSpots);
     document.getElementById("toggle-map").addEventListener("click", toggleMapVisibility);
+    document.getElementById("spot-select").addEventListener("change", handleSpotSelectChange);
+    document.getElementById("toggle-spot-config").addEventListener("click", toggleSpotConfigPanel);
+    document.getElementById("close-spot-config").addEventListener("click", () => setSpotConfigVisible(false));
+    document.getElementById("delete-selected-spot").addEventListener("click", () => {
+      if (state.selectedSpotId) {
+        deleteSpot(state.selectedSpotId);
+      }
+    });
     loadSpots();
   }
 
@@ -62,6 +71,11 @@ const MapApp = (() => {
       return;
     }
     state.spots = await response.json();
+    if (state.selectedSpotId && !selectedSpot()) {
+      state.selectedSpotId = null;
+      state.spotConfigVisible = false;
+      ForecastUI.clear();
+    }
     renderSpotList();
     renderSpotConfigPanel();
     renderMarkers();
@@ -104,7 +118,31 @@ const MapApp = (() => {
       item.append(main, del);
       list.appendChild(item);
     }
+    renderSpotSelect();
     renderSpotConfigPanel();
+  }
+
+  function renderSpotSelect() {
+    const select = document.getElementById("spot-select");
+    const deleteButton = document.getElementById("delete-selected-spot");
+    if (!select) return;
+
+    if (!state.spots.length) {
+      select.innerHTML = `<option value="">Sin puntos guardados</option>`;
+      select.disabled = true;
+    } else {
+      select.disabled = false;
+      select.innerHTML = [
+        `<option value="">Selecciona un punto</option>`,
+        ...state.spots.map((spot) => (
+          `<option value="${spot.id}"${spot.id === state.selectedSpotId ? " selected" : ""}>${escapeHtml(spot.name)}</option>`
+        ))
+      ].join("");
+    }
+
+    if (deleteButton) {
+      deleteButton.hidden = !state.selectedSpotId;
+    }
   }
 
   function renderSpotConfigPanel() {
@@ -112,8 +150,12 @@ const MapApp = (() => {
     const form = document.getElementById("spot-config-form");
     const spot = selectedSpot();
     if (!panel || !form) return;
-    panel.hidden = !spot;
     if (!spot) {
+      state.spotConfigVisible = false;
+    }
+    panel.hidden = !spot || !state.spotConfigVisible;
+    syncSpotConfigButton();
+    if (!spot || !state.spotConfigVisible) {
       form.innerHTML = "";
       return;
     }
@@ -122,6 +164,16 @@ const MapApp = (() => {
       ${Object.keys(methodLabels).map((method) => renderMethodContext(method, contexts[method])).join("")}
       <button type="submit" class="primary-button">Guardar configuracion</button>
     `;
+  }
+
+  function syncSpotConfigButton() {
+    const button = document.getElementById("toggle-spot-config");
+    if (!button) return;
+    const hasSpot = Boolean(selectedSpot());
+    button.hidden = !hasSpot;
+    button.textContent = state.spotConfigVisible ? "Ocultar config." : "Configurar";
+    button.setAttribute("aria-controls", "spot-config-panel");
+    button.setAttribute("aria-expanded", hasSpot && state.spotConfigVisible ? "true" : "false");
   }
 
   function renderMethodContext(method, context) {
@@ -153,6 +205,28 @@ const MapApp = (() => {
         <input id="water-depth-${method}" data-method="${method}" data-context-field="water_depth_estimate_m" type="number" min="0" max="200" step="1" placeholder="Opcional" value="${context.water_depth_estimate_m ?? ""}">
       </fieldset>
     `;
+  }
+
+  async function handleSpotSelectChange(event) {
+    const spotId = Number.parseInt(event.target.value, 10);
+    if (!spotId) {
+      state.selectedSpotId = null;
+      state.spotConfigVisible = false;
+      ForecastUI.clear();
+      renderSpotList();
+      return;
+    }
+    await selectSpot(spotId);
+  }
+
+  function toggleSpotConfigPanel() {
+    if (!selectedSpot()) return;
+    setSpotConfigVisible(!state.spotConfigVisible);
+  }
+
+  function setSpotConfigVisible(visible) {
+    state.spotConfigVisible = Boolean(visible) && Boolean(selectedSpot());
+    renderSpotConfigPanel();
   }
 
   function renderMarkers() {
@@ -252,6 +326,7 @@ const MapApp = (() => {
 
   async function selectSpot(spotId) {
     state.selectedSpotId = spotId;
+    state.spotConfigVisible = false;
     renderSpotList();
     renderSpotConfigPanel();
     const spot = state.spots.find((item) => item.id === spotId);
@@ -276,6 +351,7 @@ const MapApp = (() => {
     state.markerMeta.delete(spotId);
     if (state.selectedSpotId === spotId) {
       state.selectedSpotId = null;
+      state.spotConfigVisible = false;
       ForecastUI.clear();
       renderSpotConfigPanel();
     }

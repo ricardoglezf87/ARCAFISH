@@ -15,7 +15,20 @@
   <aside class="spots-panel">
     <div class="panel-head">
       <h2>Puntos</h2>
-      <button class="icon-button" id="refresh-spots" title="Actualizar puntos" aria-label="Actualizar puntos">&#8635;</button>
+      <div class="panel-actions">
+        <button class="ghost-button compact-button" id="toggle-spot-config" type="button" hidden>Configurar</button>
+        <button class="icon-button" id="refresh-spots" title="Actualizar puntos" aria-label="Actualizar puntos">&#8635;</button>
+      </div>
+    </div>
+
+    <div class="spot-picker">
+      <label class="field-control" for="spot-select">
+        <span>Punto guardado</span>
+        <select id="spot-select">
+          <option value="">Sin puntos guardados</option>
+        </select>
+      </label>
+      <button class="danger-button" id="delete-selected-spot" type="button" hidden>Eliminar punto</button>
     </div>
 
     <form id="spot-form" class="spot-form" hidden>
@@ -38,6 +51,7 @@
     <section class="spot-config-panel" id="spot-config-panel" hidden>
       <div class="panel-head">
         <h2>Configuracion</h2>
+        <button class="ghost-button compact-button" id="close-spot-config" type="button">Cerrar</button>
       </div>
       <form id="spot-config-form" class="spot-config-form"></form>
     </section>

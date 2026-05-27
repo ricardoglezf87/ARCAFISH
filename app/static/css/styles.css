@@ -104,6 +104,13 @@ textarea {
   gap: 12px;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .panel-head h2,
 .forecast-empty h2,
 .forecast-title h2 {
@@ -147,6 +154,21 @@ textarea {
   background: #fff;
   border-color: #efc6c1;
   padding: 0 10px;
+}
+
+.compact-button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.84rem;
+}
+
+.spot-picker {
+  display: none;
+  gap: 10px;
+}
+
+.spot-picker .danger-button {
+  justify-self: start;
 }
 
 .spot-form {
@@ -536,6 +558,11 @@ textarea {
   align-content: start;
 }
 
+.species-select-panel {
+  display: none;
+  margin-bottom: 16px;
+}
+
 .species-section {
   display: grid;
   gap: 10px;
@@ -640,7 +667,7 @@ textarea {
 
 .fishing-context-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
   gap: 12px;
 }
 
@@ -969,9 +996,21 @@ tr:last-child td {
   }
 
   .spots-panel {
-    max-height: 320px;
+    max-height: none;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .spot-picker {
+    display: grid;
+  }
+
+  .spots-list {
+    display: none;
+  }
+
+  .method-config-group {
+    grid-template-columns: 1fr;
   }
 
   .workspace {
@@ -985,12 +1024,42 @@ tr:last-child td {
   .fishing-context-grid {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
+
+  .species-select-panel {
+    display: block;
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  .species-panel {
+    display: none;
+  }
 }
 
 @media (max-width: 640px) {
   .topbar {
     align-items: start;
     flex-direction: column;
+  }
+
+  .topbar-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .panel-head {
+    align-items: start;
+  }
+
+  .panel-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .forecast-panel {
+    padding: 14px;
   }
 
   .summary-grid {
