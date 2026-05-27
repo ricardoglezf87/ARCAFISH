@@ -25,12 +25,32 @@ copy .env.example .env
 ## Ejecucion
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --port 6990 --reload
 ```
 
-Abre `http://127.0.0.1:8010`.
+Abre `http://127.0.0.1:6990` desde el propio equipo servidor.
 
-En Windows tambien puedes ejecutar `run_arcafish.bat`. El script crea `.venv` si hace falta, instala dependencias, crea `.env` desde `.env.example`, abre el navegador y arranca el servidor. Por defecto usa el puerto `8010`; puedes cambiarlo definiendo `ARCAFISH_PORT` antes de ejecutar el BAT.
+En Windows tambien puedes ejecutar `run_arcafish.bat`. El script crea `.venv` si hace falta, instala dependencias, crea `.env` desde `.env.example`, abre el navegador y arranca el servidor. Por defecto escucha en `0.0.0.0:6990`; puedes cambiarlo definiendo `ARCAFISH_HOST` o `ARCAFISH_PORT` antes de ejecutar el BAT.
+
+Ejemplo para dejarlo solo local:
+
+```bat
+set ARCAFISH_HOST=127.0.0.1
+set ARCAFISH_PORT=6990
+run_arcafish.bat
+```
+
+## Acceso desde fuera
+
+Para entrar desde Internet no basta con redirigir el puerto del router: la aplicacion tambien debe escuchar en la interfaz de red. Por eso el arranque usa `--host 0.0.0.0`.
+
+Checklist de red:
+
+- Fija la IP local del equipo servidor, idealmente con reserva DHCP en el router.
+- Redirige en el router el puerto TCP externo `6990` hacia `IP_LOCAL_DEL_SERVIDOR:6990`.
+- Permite el puerto TCP `6990` en el firewall de Windows del equipo servidor.
+- Comprueba que la IP WAN del router coincide con tu IP publica. Si no coincide, probablemente estas bajo CG-NAT y necesitaras pedir IP publica al operador o usar una VPN tipo Tailscale/ZeroTier/WireGuard.
+- Ten en cuenta que ARCAFISH no tiene autenticacion todavia. Para exponerlo a Internet de forma continuada, es mas seguro usar VPN o poner delante un proxy con HTTPS y autenticacion.
 
 ## Uso rapido
 
@@ -58,6 +78,10 @@ En Windows, `tzdata` es necesario para que Python reconozca `Atlantic/Canary`.
 - Open-Meteo Marine: `https://open-meteo.com/en/docs/marine-weather-api`
 
 Open-Meteo no requiere clave en el MVP. La marea se deriva de `sea_level_height_msl`, por lo que ayuda a decidir ventanas de pesca, pero no sustituye tablas oficiales ni debe usarse para navegacion.
+
+## Rendimiento de pronosticos
+
+El servicio cachea cada punto durante `FORECAST_CACHE_TTL_MINUTES` y pide Weather + Marine en paralelo para reducir la espera en cargas nuevas. Si necesitas que responda aun mas rapido, reduce `FORECAST_DAYS` a `3` o `5` en `.env`; la primera carga pedira menos datos y las siguientes usaran cache mientras no fuerces refresco.
 
 ## Scoring
 

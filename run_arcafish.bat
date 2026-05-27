@@ -31,13 +31,20 @@ echo.
 echo Si Open-Meteo falla por certificados en este equipo, edita .env y usa:
 echo HTTP_VERIFY_SSL=false
 echo.
-if "%ARCAFISH_PORT%"=="" set "ARCAFISH_PORT=8010"
+if "%ARCAFISH_HOST%"=="" set "ARCAFISH_HOST=0.0.0.0"
+if "%ARCAFISH_PORT%"=="" set "ARCAFISH_PORT=6990"
+set "ARCAFISH_BROWSER_HOST=%ARCAFISH_HOST%"
+if "%ARCAFISH_BROWSER_HOST%"=="0.0.0.0" set "ARCAFISH_BROWSER_HOST=127.0.0.1"
 echo Abre en el navegador:
-echo http://127.0.0.1:%ARCAFISH_PORT%
+echo http://%ARCAFISH_BROWSER_HOST%:%ARCAFISH_PORT%
+echo.
+echo Escuchando en: %ARCAFISH_HOST%:%ARCAFISH_PORT%
+echo Para acceso externo necesitas redireccionar TCP %ARCAFISH_PORT% hacia este equipo
+echo y permitir el puerto en el firewall de Windows.
 echo.
 
-start "" powershell -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:%ARCAFISH_PORT%'"
-python -m uvicorn app.main:app --host 127.0.0.1 --port %ARCAFISH_PORT% --reload
+start "" powershell -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://%ARCAFISH_BROWSER_HOST%:%ARCAFISH_PORT%'"
+python -m uvicorn app.main:app --host %ARCAFISH_HOST% --port %ARCAFISH_PORT% --reload
 goto end
 
 :error

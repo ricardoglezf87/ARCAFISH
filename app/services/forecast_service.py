@@ -1,3 +1,4 @@
+import asyncio
 from collections import Counter
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
@@ -67,8 +68,10 @@ class ForecastService:
         return forecast
 
     async def _fetch_external_data(self, spot: FishingSpot) -> tuple[dict, dict]:
-        weather = await self.weather_provider.fetch(spot.latitude, spot.longitude, self.settings.forecast_days)
-        marine = await self.marine_provider.fetch(spot.latitude, spot.longitude, self.settings.forecast_days)
+        weather, marine = await asyncio.gather(
+            self.weather_provider.fetch(spot.latitude, spot.longitude, self.settings.forecast_days),
+            self.marine_provider.fetch(spot.latitude, spot.longitude, self.settings.forecast_days),
+        )
         return weather, marine
 
     def _build_response(
