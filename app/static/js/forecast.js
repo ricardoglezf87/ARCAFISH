@@ -11,6 +11,22 @@ const ForecastUI = (() => {
       castingDistanceM: 20
     }
   };
+  const averageFields = {
+    wind_speed_ms: 1,
+    wind_gust_ms: 1,
+    temperature_c: 1,
+    precipitation_mm: 1,
+    precipitation_probability: 0,
+    pressure_hpa: 0,
+    pressure_trend_hpa: 1,
+    cloud_cover_percent: 0,
+    wave_height_m: 1,
+    wave_period_s: 0,
+    sea_surface_temperature_c: 1,
+    tide_height_m: 2,
+    fishing_score: 0
+  };
+  const directionFields = ["wind_direction_deg", "wave_direction_deg"];
 
   async function loadForecast(spotId, options = {}) {
     state.spotId = spotId;
@@ -401,7 +417,7 @@ const ForecastUI = (() => {
 
     return `
       <tr class="${isCurrent ? "current-forecast-row" : ""}"${isCurrent ? ` aria-current="time"` : ""}>
-        <td>${currentBadge}${formatDateTime(row.datetime)}</td>
+        <td>${currentBadge}${formatDateTime(row.datetime, row.period_end_datetime)}</td>
         <td>${escapeHtml(row.weather_description || "Sin datos")}<br><span class="small-muted">${pressure}</span></td>
         <td><span class="hour-score ${quality}">${scoreBlock.score}</span></td>
         <td>${wind}</td>
@@ -439,7 +455,7 @@ const ForecastUI = (() => {
     const scopedRows = state.selectedDay === "all"
       ? rows
       : rows.filter((row) => rowDayKey(row.datetime) === state.selectedDay);
-    return scopedRows.filter((row) => rowMatchesInterval(row));
+    return aggregateRows(scopedRows, clampInterval(state.intervalHours));
   }
 
   function currentVisibleRowDatetime(rows) {
@@ -448,15 +464,15 @@ const ForecastUI = (() => {
     if (Number.isNaN(now.getTime())) return null;
     for (let index = 0; index < rows.length; index += 1) {
       const rowStart = new Date(rows[index].datetime);
-      const nextStart = rows[index + 1] ? new Date(rows[index + 1].datetime) : null;
+      const rowEnd = rows[index].period_end_datetime
+        ? new Date(rows[index].period_end_datetime)
+        : rows[index + 1] ? new Date(rows[index + 1].datetime) : null;
       if (Number.isNaN(rowStart.getTime())) continue;
       if (now < rowStart) {
         return sameLocalDate(now, rowStart) ? rows[index].datetime : null;
       }
-      if (!nextStart || Number.isNaN(nextStart.getTime())) {
-        continue;
-      }
-      if (now >= rowStart && now < nextStart) {
+      if (rowEnd && Number.isNaN(rowEnd.getTime())) continue;
+      if (now >= rowStart && (!rowEnd || now < rowEnd)) {
         return rows[index].datetime;
       }
     }
@@ -486,11 +502,176 @@ const ForecastUI = (() => {
     }).format(date);
   }
 
-  function rowMatchesInterval(row) {
-    const interval = clampInterval(state.intervalHours);
-    if (interval <= 1) return true;
-    const date = new Date(row.datetime);
-    return date.getHours() % interval === 0;
+  function aggregateRows(rows, interval) {
+    if (interval <= 1) return rows;
+    const groups = new Map();
+    for (const row of rows) {
+      const start = intervalStart(row.datetime, interval);
+      if (!start) continue;
+      const key = toLocalIso(start);
+      if (!groups.has(key)) {
+        groups.set(key, { start, rows: [] });
+      }
+      groups.get(key).rows.push(row);
+    }
+    return [...groups.values()]
+      .sort((a, b) => a.start - b.start)
+      .map((group) => aggregateInterval(group.start, group.rows, interval));
+  }
+
+  function intervalStart(value, interval) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const start = new Date(date);
+    start.setMinutes(0, 0, 0);
+    start.setHours(Math.floor(start.getHours() / interval) * interval);
+    return start;
+  }
+
+  function aggregateInterval(start, rows, interval) {
+    const first = rows[0] || {};
+    const end = new Date(start);
+    end.setHours(end.getHours() + interval);
+    const aggregate = {
+      ...first,
+      datetime: toLocalIso(start),
+      period_end_datetime: toLocalIso(end),
+      period_hours: interval,
+      sample_count: rows.length,
+      is_aggregate: true
+    };
+
+    for (const [field, digits] of Object.entries(averageFields)) {
+      aggregate[field] = roundedAverage(rows, field, digits);
+    }
+    for (const field of directionFields) {
+      aggregate[field] = roundedDirection(rows, field);
+    }
+
+    aggregate.weather_code = mostCommon(rows, "weather_code");
+    aggregate.weather_description = mostCommon(rows, "weather_description") || first.weather_description;
+    aggregate.tide_state = mostCommon(rows, "tide_state") || first.tide_state;
+    aggregate.moon_phase = mostCommon(rows, "moon_phase") || first.moon_phase;
+    aggregate.is_day = mostCommon(rows, "is_day");
+    aggregate.fishing_category = categoryForScore(aggregate.fishing_score);
+    aggregate.explanation = `Media del tramo calculada con ${rows.length} hora(s).`;
+    aggregate.safety_alerts = uniqueItems(rows, "safety_alerts");
+    aggregate.missing_fields = uniqueItems(rows, "missing_fields");
+    aggregate.factor_scores = averageMapping(rows, "factor_scores", 3);
+    aggregate.species_scores = aggregateSpeciesScores(rows);
+    return aggregate;
+  }
+
+  function roundedAverage(rows, field, digits) {
+    const values = rows
+      .map((row) => row[field])
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    if (!values.length) return null;
+    const factor = 10 ** digits;
+    const average = values.reduce((total, value) => total + value, 0) / values.length;
+    const rounded = Math.round(average * factor) / factor;
+    return digits === 0 ? Math.round(rounded) : rounded;
+  }
+
+  function roundedDirection(rows, field) {
+    const values = rows
+      .map((row) => row[field])
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    if (!values.length) return null;
+    const x = values.reduce((total, value) => total + Math.cos(value * Math.PI / 180), 0) / values.length;
+    const y = values.reduce((total, value) => total + Math.sin(value * Math.PI / 180), 0) / values.length;
+    if (Math.abs(x) < 1e-9 && Math.abs(y) < 1e-9) return null;
+    const degrees = Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360);
+    return degrees >= 360 ? 0 : degrees;
+  }
+
+  function mostCommon(rows, field) {
+    const counts = new Map();
+    for (const row of rows) {
+      const value = row[field];
+      if (value === null || value === undefined) continue;
+      const key = String(value);
+      const item = counts.get(key) || { value, count: 0 };
+      item.count += 1;
+      counts.set(key, item);
+    }
+    let best = null;
+    for (const item of counts.values()) {
+      if (!best || item.count > best.count) best = item;
+    }
+    return best ? best.value : null;
+  }
+
+  function uniqueItems(rows, field) {
+    const seen = new Set();
+    const items = [];
+    for (const row of rows) {
+      for (const value of row[field] || []) {
+        if (seen.has(value)) continue;
+        seen.add(value);
+        items.push(value);
+      }
+    }
+    return items;
+  }
+
+  function averageMapping(rows, field, digits) {
+    const keys = new Set();
+    for (const row of rows) {
+      const values = row[field] || {};
+      for (const [key, value] of Object.entries(values)) {
+        if (typeof value === "number" && Number.isFinite(value)) keys.add(key);
+      }
+    }
+    return [...keys].sort().reduce((result, key) => {
+      result[key] = roundedAverage(rows.map((row) => row[field] || {}), key, digits);
+      return result;
+    }, {});
+  }
+
+  function aggregateSpeciesScores(rows) {
+    const speciesIds = new Set();
+    for (const row of rows) {
+      for (const speciesId of Object.keys(row.species_scores || {})) {
+        speciesIds.add(speciesId);
+      }
+    }
+    return [...speciesIds].sort().reduce((result, speciesId) => {
+      const scoreRows = rows
+        .filter((row) => row.species_scores?.[speciesId])
+        .map((row) => row.species_scores[speciesId]);
+      if (!scoreRows.length) return result;
+      const score = roundedAverage(scoreRows, "score", 0);
+      result[speciesId] = {
+        ...scoreRows[0],
+        score,
+        category: categoryForScore(score),
+        base_score: roundedAverage(scoreRows, "base_score", 0),
+        seasonality_factor: roundedAverage(scoreRows, "seasonality_factor", 2),
+        method_factor: roundedAverage(scoreRows, "method_factor", 3),
+        distance_factor: roundedAverage(scoreRows, "distance_factor", 3),
+        target_zone_factor: roundedAverage(scoreRows, "target_zone_factor", 3),
+        spot_factor: roundedAverage(scoreRows, "spot_factor", 3),
+        factor_scores: averageMapping(scoreRows, "factor_scores", 3),
+        safety_alerts: uniqueItems(scoreRows, "safety_alerts"),
+        missing_fields: uniqueItems(scoreRows, "missing_fields"),
+        explanation: `Score medio del tramo calculado con ${scoreRows.length} hora(s).`
+      };
+      return result;
+    }, {});
+  }
+
+  function categoryForScore(score) {
+    if (score === null || score === undefined || Number.isNaN(score)) return "Mala";
+    if (score <= 39) return "Mala";
+    if (score <= 59) return "Regular";
+    if (score <= 79) return "Buena";
+    return "Muy buena";
+  }
+
+  function toLocalIso(date) {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
   }
 
   function clampInterval(value) {
@@ -567,15 +748,24 @@ const ForecastUI = (() => {
     return `${raw}${unit ? ` ${unit}` : ""}`;
   }
 
-  function formatDateTime(value) {
+  function formatDateTime(value, endValue = null) {
     if (!value) return "s/d";
-    return new Intl.DateTimeFormat("es-ES", {
+    const start = new Date(value);
+    const formattedStart = new Intl.DateTimeFormat("es-ES", {
       weekday: "short",
       day: "2-digit",
       month: "2-digit",
       hour: "2-digit",
       minute: "2-digit"
-    }).format(new Date(value));
+    }).format(start);
+    if (!endValue) return formattedStart;
+    const end = new Date(endValue);
+    if (Number.isNaN(end.getTime())) return formattedStart;
+    const formattedEnd = new Intl.DateTimeFormat("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(end);
+    return `${formattedStart}-${formattedEnd}`;
   }
 
   function compass(degrees) {
