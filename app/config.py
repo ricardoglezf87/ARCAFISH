@@ -14,8 +14,11 @@ class Settings:
     forecast_cache_ttl_minutes: int
     http_timeout_seconds: float
     http_verify_ssl: bool
+    weather_ensemble_enabled: bool
     open_meteo_weather_url: str
     open_meteo_marine_url: str
+    metno_weather_url: str
+    metno_user_agent: str
     aemet_api_key: str | None
     stormglass_api_key: str | None
     worldtides_api_key: str | None
@@ -43,8 +46,11 @@ def get_settings() -> Settings:
         forecast_cache_ttl_minutes=_env_int("FORECAST_CACHE_TTL_MINUTES", 60, minimum=5),
         http_timeout_seconds=_env_float("HTTP_TIMEOUT_SECONDS", 12.0, minimum=1.0),
         http_verify_ssl=_env_bool("HTTP_VERIFY_SSL", True),
+        weather_ensemble_enabled=_env_bool("WEATHER_ENSEMBLE_ENABLED", True),
         open_meteo_weather_url=_env("OPEN_METEO_WEATHER_URL", "https://api.open-meteo.com/v1/forecast"),
         open_meteo_marine_url=_env("OPEN_METEO_MARINE_URL", "https://marine-api.open-meteo.com/v1/marine"),
+        metno_weather_url=_env("METNO_WEATHER_URL", "https://api.met.no/weatherapi/locationforecast/2.0/complete"),
+        metno_user_agent=_env("METNO_USER_AGENT", "ARCAFISH local app (contact: local-user)"),
         aemet_api_key=_env_optional("AEMET_API_KEY"),
         stormglass_api_key=_env_optional("STORMGLASS_API_KEY"),
         worldtides_api_key=_env_optional("WORLDTIDES_API_KEY"),

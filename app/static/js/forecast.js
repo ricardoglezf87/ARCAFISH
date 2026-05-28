@@ -9,7 +9,11 @@ const ForecastUI = (() => {
     fishingContext: {
       fishingMethod: "float",
       castingDistanceM: 20
-    }
+    },
+    requestId: 0,
+    refreshTimer: null,
+    backgroundRefreshAttempts: 0,
+    loadingTimers: []
   };
   const averageFields = {
     wind_speed_ms: 1,
@@ -29,29 +33,107 @@ const ForecastUI = (() => {
   const directionFields = ["wind_direction_deg", "wave_direction_deg"];
 
   async function loadForecast(spotId, options = {}) {
+    const requestId = state.requestId + 1;
+    state.requestId = requestId;
     state.spotId = spotId;
+    clearRefreshTimer();
     const panel = document.getElementById(panelId);
-    panel.innerHTML = `<div class="forecast-empty"><h2>Pronostico</h2><p>Cargando prevision...</p></div>`;
+    if (!options.keepExisting) {
+      state.backgroundRefreshAttempts = 0;
+      renderLoading(options.forceRefresh);
+    }
     try {
-      const response = await fetch(`/api/spots/${spotId}/forecast?${forecastQueryParams().toString()}`);
+      const params = forecastQueryParams();
+      if (options.forceRefresh) {
+        params.set("force_refresh", "true");
+      }
+      const response = await fetch(`/api/spots/${spotId}/forecast?${params.toString()}`);
+      if (requestId !== state.requestId) {
+        return null;
+      }
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: "No se pudo obtener el pronostico." }));
         throw new Error(error.detail || "No se pudo obtener el pronostico.");
       }
+      clearLoadingTimers();
       state.forecast = await response.json();
       if (!options.preserveView) {
         state.selectedSpecies = "general";
         state.selectedDay = "all";
       }
       renderForecast();
+      scheduleRefreshPoll();
       return state.forecast;
     } catch (error) {
+      if (requestId !== state.requestId) {
+        return null;
+      }
+      clearLoadingTimers();
+      if (options.keepExisting && state.forecast) {
+        scheduleRefreshPoll();
+        return null;
+      }
       panel.innerHTML = `<div class="forecast-error">${escapeHtml(error.message)}</div>`;
       return null;
     }
   }
 
+  function renderLoading(forceRefresh = false) {
+    clearLoadingTimers();
+    const panel = document.getElementById(panelId);
+    const text = forceRefresh ? "Actualizando pronostico..." : "Cargando prevision...";
+    panel.innerHTML = `
+      <div class="forecast-empty">
+        <h2>Pronostico</h2>
+        <p id="forecast-loading-text">${text}</p>
+      </div>
+    `;
+    state.loadingTimers = [
+      window.setTimeout(() => updateLoadingText("Pidiendo datos meteorologicos y marinos..."), 3500),
+      window.setTimeout(() => updateLoadingText("La primera carga puede tardar si no hay cache disponible."), 9000)
+    ];
+  }
+
+  function updateLoadingText(text) {
+    const element = document.getElementById("forecast-loading-text");
+    if (element) {
+      element.textContent = text;
+    }
+  }
+
+  function clearLoadingTimers() {
+    for (const timer of state.loadingTimers) {
+      window.clearTimeout(timer);
+    }
+    state.loadingTimers = [];
+  }
+
+  function clearRefreshTimer() {
+    if (state.refreshTimer) {
+      window.clearTimeout(state.refreshTimer);
+      state.refreshTimer = null;
+    }
+  }
+
+  function scheduleRefreshPoll() {
+    clearRefreshTimer();
+    if (!state.forecast?.meta?.refreshing || !state.spotId) {
+      state.backgroundRefreshAttempts = 0;
+      return;
+    }
+    if (state.backgroundRefreshAttempts >= 6) {
+      return;
+    }
+    state.backgroundRefreshAttempts += 1;
+    state.refreshTimer = window.setTimeout(() => {
+      loadForecast(state.spotId, { preserveView: true, keepExisting: true });
+    }, 5000);
+  }
+
   function clear() {
+    state.requestId += 1;
+    clearRefreshTimer();
+    clearLoadingTimers();
     state.forecast = null;
     state.spotId = null;
     state.selectedSpecies = "general";
@@ -78,6 +160,8 @@ const ForecastUI = (() => {
       ? summary.safety_alerts.map((alert) => `<span class="alert-pill">${escapeHtml(alert)}</span>`).join("")
       : `<span class="meta-pill">Sin alertas principales</span>`;
     const cached = forecast.meta?.cached ? `<span class="meta-pill">Cache</span>` : "";
+    const stale = forecast.meta?.stale ? `<span class="meta-pill warning">Cache caducada</span>` : "";
+    const refreshing = forecast.meta?.refreshing ? `<span class="meta-pill refresh">Actualizando</span>` : "";
 
     const panel = document.getElementById(panelId);
     panel.innerHTML = `
@@ -88,10 +172,15 @@ const ForecastUI = (() => {
               <h2>${escapeHtml(forecast.spot.name)}</h2>
               <div class="small-muted">${forecast.spot.latitude.toFixed(4)}, ${forecast.spot.longitude.toFixed(4)}</div>
               <div class="small-muted">Prediccion cargada: ${forecast.meta.forecast_days} dias - Base del indice: proximas 24 h</div>
+              ${renderProviderMeta(forecast)}
             </div>
-            <div class="forecast-badges">${cached}<span class="quality-badge ${quality}">${escapeHtml(summary.category)}</span></div>
+            <div class="forecast-actions">
+              <div class="forecast-badges">${cached}${stale}${refreshing}<span class="quality-badge ${quality}">${escapeHtml(summary.category)}</span></div>
+              <button class="icon-button" id="refresh-forecast" type="button" title="Actualizar pronostico" aria-label="Actualizar pronostico">&#8635;</button>
+            </div>
           </div>
 
+          ${renderForecastWarning(forecast)}
           ${renderFishingContextControls(forecast)}
           ${renderSpeciesSelect(forecast)}
 
@@ -138,10 +227,42 @@ const ForecastUI = (() => {
 
     bindSpeciesButtons();
     bindSpeciesSelect();
+    bindRefreshButton();
     bindFishingContextControls();
     bindDayButtons();
     bindIntervalControl();
     bindExportButtons();
+  }
+
+  function renderForecastWarning(forecast) {
+    const messages = [];
+    if (forecast.meta?.warning) {
+      messages.push(forecast.meta.warning);
+    }
+    for (const failure of forecast.meta?.weather_provider_failures || []) {
+      messages.push(`${failure.provider}: ${failure.error}`);
+    }
+    if (!messages.length) return "";
+    return `<p class="forecast-warning">${messages.map(escapeHtml).join("<br>")}</p>`;
+  }
+
+  function renderProviderMeta(forecast) {
+    const providers = forecast.meta?.weather_providers || [];
+    const weatherProvider = forecast.meta?.weather_provider || providers[0];
+    const weatherText = forecast.meta?.weather_ensemble
+      ? `Meteo: media de ${providers.length} proveedores`
+      : `Meteo: ${weatherProvider || "s/d"}`;
+    const marineText = forecast.meta?.marine_provider ? `Mar: ${forecast.meta.marine_provider}` : "";
+    return `<div class="small-muted">${escapeHtml([weatherText, marineText].filter(Boolean).join(" - "))}</div>`;
+  }
+
+  function bindRefreshButton() {
+    const button = document.getElementById("refresh-forecast");
+    if (!button) return;
+    button.addEventListener("click", () => {
+      if (!state.spotId) return;
+      loadForecast(state.spotId, { preserveView: true, forceRefresh: true });
+    });
   }
 
   function renderSpeciesCards(forecast) {
