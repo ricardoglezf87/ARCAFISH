@@ -35,6 +35,10 @@ if "%ARCAFISH_HOST%"=="" set "ARCAFISH_HOST=0.0.0.0"
 if "%ARCAFISH_PORT%"=="" set "ARCAFISH_PORT=6990"
 set "ARCAFISH_BROWSER_HOST=%ARCAFISH_HOST%"
 if "%ARCAFISH_BROWSER_HOST%"=="0.0.0.0" set "ARCAFISH_BROWSER_HOST=127.0.0.1"
+echo Cerrando servidor anterior en el puerto %ARCAFISH_PORT% si existe...
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\close-arcafish-port.ps1" -Port %ARCAFISH_PORT%
+if errorlevel 1 goto error
+echo.
 echo Abre en el navegador:
 echo http://%ARCAFISH_BROWSER_HOST%:%ARCAFISH_PORT%
 echo.

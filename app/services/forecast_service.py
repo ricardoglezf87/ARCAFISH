@@ -2,6 +2,7 @@ import asyncio
 from collections import Counter
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
+from math import atan2, cos, pi, sin
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -20,12 +21,27 @@ from app.services.fishing_score import (
     serialize_fishing_context,
 )
 from app.services.marine_provider import OpenMeteoMarineProvider
+from app.services.metno_weather_provider import MetNoWeatherProvider
 from app.services.tide_provider import DerivedTideProvider
 from app.services.weather_provider import OpenMeteoWeatherProvider
 
 
 class ProviderUnavailableError(RuntimeError):
     pass
+
+
+STALE_REFRESHING_WARNING = "Datos de cache caducada; actualizando pronostico en segundo plano."
+STALE_PROVIDER_WARNING = "No se pudo actualizar ahora mismo; mostrando la ultima prevision guardada."
+WEATHER_AVERAGE_FIELDS = {
+    "temperature_2m": 2,
+    "precipitation": 3,
+    "precipitation_probability": 1,
+    "pressure_msl": 2,
+    "cloud_cover": 1,
+    "wind_speed_10m": 2,
+    "wind_gusts_10m": 2,
+}
+WEATHER_DIRECTION_FIELDS = {"wind_direction_10m"}
 
 
 class ForecastService:
@@ -35,6 +51,7 @@ class ForecastService:
         self.db = db
         self.settings = settings or get_settings()
         self.weather_provider = OpenMeteoWeatherProvider(self.settings)
+        self.weather_ensemble_providers = [MetNoWeatherProvider(self.settings)] if self.settings.weather_ensemble_enabled else []
         self.marine_provider = OpenMeteoMarineProvider(self.settings)
         self.astronomy_provider = LocalAstronomyProvider(self.settings)
         self.tide_provider = DerivedTideProvider()
@@ -46,33 +63,95 @@ class ForecastService:
         fishing_context: FishingContext | None = None,
     ) -> dict:
         if not force_refresh:
-            cached = self._get_valid_cache(spot)
-            if cached is not None:
-                forecast = deepcopy(cached.raw_data)
-                forecast.setdefault("meta", {})["cached"] = True
-                return self._rescore_forecast(forecast, fishing_context)
+            cached_forecast = self.get_cached_forecast(spot, fishing_context=fishing_context)
+            if cached_forecast is not None:
+                return cached_forecast
 
         try:
             weather_raw, marine_raw = await self._fetch_external_data(spot)
         except (httpx.HTTPError, RuntimeError) as exc:
-            stale = self._get_latest_cache(spot)
-            if stale is not None:
-                forecast = deepcopy(stale.raw_data)
-                forecast.setdefault("meta", {})["cached"] = True
-                forecast["meta"]["warning"] = "Datos de cache caducada por error del proveedor externo."
-                return self._rescore_forecast(forecast, fishing_context)
+            cached_forecast = self.get_cached_forecast(
+                spot,
+                fishing_context=fishing_context,
+                allow_expired=True,
+            )
+            if cached_forecast is not None:
+                cached_forecast.setdefault("meta", {})["warning"] = STALE_PROVIDER_WARNING
+                return cached_forecast
             raise ProviderUnavailableError(f"No se pudo obtener el pronostico externo: {exc}") from exc
 
         forecast = self._build_response(spot, weather_raw, marine_raw, fishing_context)
         self._store_cache(spot.id, forecast)
         return forecast
 
+    def get_cached_forecast(
+        self,
+        spot: FishingSpot,
+        fishing_context: FishingContext | None = None,
+        allow_expired: bool = False,
+    ) -> dict | None:
+        cache = self._get_valid_cache(spot)
+        stale = False
+        if cache is None and allow_expired:
+            cache = self._get_latest_cache(spot)
+            stale = cache is not None
+        if cache is None:
+            return None
+
+        forecast = deepcopy(cache.raw_data)
+        meta = forecast.setdefault("meta", {})
+        meta["cached"] = True
+        if stale:
+            meta["stale"] = True
+            meta["warning"] = STALE_REFRESHING_WARNING
+        else:
+            meta.pop("stale", None)
+            if meta.get("warning") in {STALE_REFRESHING_WARNING, STALE_PROVIDER_WARNING}:
+                meta.pop("warning", None)
+        return self._rescore_forecast(forecast, fishing_context)
+
     async def _fetch_external_data(self, spot: FishingSpot) -> tuple[dict, dict]:
         weather, marine = await asyncio.gather(
-            self.weather_provider.fetch(spot.latitude, spot.longitude, self.settings.forecast_days),
+            self._fetch_weather_data(spot),
             self.marine_provider.fetch(spot.latitude, spot.longitude, self.settings.forecast_days),
         )
         return weather, marine
+
+    async def _fetch_weather_data(self, spot: FishingSpot) -> dict:
+        providers = [self.weather_provider, *self.weather_ensemble_providers]
+        results = await asyncio.gather(
+            *[
+                provider.fetch(spot.latitude, spot.longitude, self.settings.forecast_days)
+                for provider in providers
+            ],
+            return_exceptions=True,
+        )
+        successes: list[tuple[str, dict]] = []
+        failures: list[dict] = []
+        for provider, result in zip(providers, results, strict=False):
+            provider_name = getattr(provider, "provider_name", provider.__class__.__name__)
+            if isinstance(result, Exception):
+                failures.append({"provider": provider_name, "error": str(result)})
+            else:
+                successes.append((provider_name, result))
+
+        if not successes:
+            failure_text = "; ".join(f"{item['provider']}: {item['error']}" for item in failures)
+            raise RuntimeError(f"No se pudo obtener meteorologia de ningun proveedor: {failure_text}")
+
+        if len(successes) == 1:
+            weather_raw = deepcopy(successes[0][1])
+            weather_raw["_arcafish_weather_meta"] = {
+                "provider": successes[0][0],
+                "providers": [successes[0][0]],
+                "ensemble": False,
+                "failures": failures,
+            }
+            return weather_raw
+
+        weather_raw = _merge_weather_payloads(successes)
+        weather_raw["_arcafish_weather_meta"]["failures"] = failures
+        return weather_raw
 
     def _build_response(
         self,
@@ -84,6 +163,7 @@ class ForecastService:
         tz = ZoneInfo(self.settings.canary_timezone)
         weather_hourly = weather_raw.get("hourly") or {}
         marine_hourly = marine_raw.get("hourly") or {}
+        weather_meta = weather_raw.get("_arcafish_weather_meta") or {}
         weather_times: list[str] = weather_hourly.get("time") or []
         marine_times: list[str] = marine_hourly.get("time") or []
         marine_index = {time_value: index for index, time_value in enumerate(marine_times)}
@@ -193,7 +273,10 @@ class ForecastService:
             "hourly": hourly_rows,
             "meta": {
                 "provider": self.provider_name,
-                "weather_provider": self.weather_provider.provider_name,
+                "weather_provider": weather_meta.get("provider", self.weather_provider.provider_name),
+                "weather_providers": weather_meta.get("providers", [self.weather_provider.provider_name]),
+                "weather_ensemble": weather_meta.get("ensemble", False),
+                "weather_provider_failures": weather_meta.get("failures", []),
                 "marine_provider": self.marine_provider.provider_name,
                 "astronomy_provider": self.astronomy_provider.provider_name,
                 "cached": False,
@@ -212,6 +295,7 @@ class ForecastService:
                 "sources": [
                     "https://open-meteo.com/en/docs",
                     "https://open-meteo.com/en/docs/marine-weather-api",
+                    "https://api.met.no/weatherapi/locationforecast/2.0/documentation",
                 ],
             },
         }
@@ -373,7 +457,84 @@ class ForecastService:
             expires_at=now + timedelta(minutes=self.settings.forecast_cache_ttl_minutes),
         )
         self.db.add(cache)
+        self.db.flush()
+        self._prune_cache_rows(spot_id, keep_cache_id=cache.id)
         self.db.commit()
+
+    def _prune_cache_rows(self, spot_id: int, keep_cache_id: int) -> None:
+        statement = select(ForecastCache).where(
+            ForecastCache.spot_id == spot_id,
+            ForecastCache.provider == self.provider_name,
+            ForecastCache.id != keep_cache_id,
+        )
+        for old_cache in self.db.scalars(statement):
+            self.db.delete(old_cache)
+
+
+def _merge_weather_payloads(successes: list[tuple[str, dict]]) -> dict:
+    provider_names = [provider_name for provider_name, _ in successes]
+    base = deepcopy(successes[0][1])
+    base_hourly = base.get("hourly") or {}
+    base_times: list[str] = base_hourly.get("time") or []
+    provider_indexes = [
+        (provider_name, payload, _time_index((payload.get("hourly") or {}).get("time") or []))
+        for provider_name, payload in successes
+    ]
+
+    for field, digits in WEATHER_AVERAGE_FIELDS.items():
+        base_hourly[field] = [
+            _rounded_average(_values_for_time(provider_indexes, time_value, field), digits)
+            for time_value in base_times
+        ]
+
+    for field in WEATHER_DIRECTION_FIELDS:
+        base_hourly[field] = [
+            _average_direction(_values_for_time(provider_indexes, time_value, field))
+            for time_value in base_times
+        ]
+
+    base["hourly"] = base_hourly
+    base["_arcafish_weather_meta"] = {
+        "provider": "weather-ensemble",
+        "providers": provider_names,
+        "ensemble": True,
+    }
+    return base
+
+
+def _time_index(times: list[str]) -> dict[str, int]:
+    return {str(time_value): index for index, time_value in enumerate(times)}
+
+
+def _values_for_time(provider_indexes: list[tuple[str, dict, dict[str, int]]], time_value: str, field: str) -> list[float]:
+    values = []
+    for _, payload, index_by_time in provider_indexes:
+        index = index_by_time.get(time_value)
+        if index is None:
+            continue
+        values_for_field = (payload.get("hourly") or {}).get(field) or []
+        if index >= len(values_for_field):
+            continue
+        value = _number_or_none(values_for_field[index])
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _rounded_average(values: list[float], digits: int) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), digits)
+
+
+def _average_direction(values: list[float]) -> int | None:
+    if not values:
+        return None
+    x = sum(cos(value * pi / 180) for value in values) / len(values)
+    y = sum(sin(value * pi / 180) for value in values) / len(values)
+    if abs(x) < 1e-9 and abs(y) < 1e-9:
+        return None
+    return int(round((atan2(y, x) * 180 / pi + 360) % 360))
 
 
 def _parse_local_datetime(value: str, tz: ZoneInfo) -> datetime:

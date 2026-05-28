@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import asyncio
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.models import FishingSpot
 from app.schemas import FishingMethod
 from app.services.forecast_export import build_forecast_pdf, pdf_filename
@@ -11,6 +14,9 @@ from app.services.fishing_score import build_fishing_context
 
 
 router = APIRouter(prefix="/api/spots", tags=["forecast"])
+logger = logging.getLogger(__name__)
+_refreshing_spot_ids: set[int] = set()
+_refreshing_lock = asyncio.Lock()
 
 TargetZone = str
 WaterColumn = str
@@ -25,6 +31,7 @@ DEFAULT_SPOT_METHOD_CONTEXTS = {
 @router.get("/{spot_id}/forecast")
 async def get_forecast(
     spot_id: int,
+    background_tasks: BackgroundTasks,
     force_refresh: bool = Query(default=False),
     fishing_method: FishingMethod = Query(default="float"),
     casting_distance_m: float = Query(default=20, ge=0, le=200),
@@ -49,6 +56,17 @@ async def get_forecast(
         water_depth_estimate_m=spot_context.get("water_depth_estimate_m"),
     )
     try:
+        if not force_refresh:
+            cached_forecast = service.get_cached_forecast(
+                spot,
+                fishing_context=fishing_context,
+                allow_expired=True,
+            )
+            if cached_forecast is not None:
+                if cached_forecast.get("meta", {}).get("stale"):
+                    cached_forecast.setdefault("meta", {})["refreshing"] = True
+                    background_tasks.add_task(_refresh_forecast_cache, spot.id)
+                return cached_forecast
         return await service.get_forecast(spot, force_refresh=force_refresh, fishing_context=fishing_context)
     except ProviderUnavailableError as exc:
         raise HTTPException(
@@ -122,4 +140,27 @@ def _spot_method_context(spot: FishingSpot, fishing_method: str) -> dict:
     context = dict(DEFAULT_SPOT_METHOD_CONTEXTS.get(fishing_method, {}))
     context.update(contexts.get(fishing_method) or {})
     return context
+
+
+async def _refresh_forecast_cache(spot_id: int) -> None:
+    async with _refreshing_lock:
+        if spot_id in _refreshing_spot_ids:
+            return
+        _refreshing_spot_ids.add(spot_id)
+
+    try:
+        db = SessionLocal()
+        try:
+            spot = db.get(FishingSpot, spot_id)
+            if spot is None:
+                return
+            service = ForecastService(db)
+            await service.get_forecast(spot, force_refresh=True)
+        except Exception:
+            logger.warning("No se pudo refrescar el pronostico en segundo plano para spot %s.", spot_id, exc_info=True)
+        finally:
+            db.close()
+    finally:
+        async with _refreshing_lock:
+            _refreshing_spot_ids.discard(spot_id)
 

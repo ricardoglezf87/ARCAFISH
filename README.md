@@ -11,6 +11,7 @@ Tambien permite exportar a PDF la vista actual del pronostico o todas las especi
 - Leaflet + OpenStreetMap + capa satelite Esri
 - Open-Meteo Weather API
 - Open-Meteo Marine API
+- MET Norway Locationforecast API como segundo proveedor meteorologico sin clave
 - Calculo astronomico local aproximado para amanecer, atardecer y fase lunar
 
 ## Instalacion
@@ -68,6 +69,8 @@ Las principales estan en `.env.example`:
 - `FORECAST_DAYS`: dias de prediccion, por defecto `7`
 - `FORECAST_CACHE_TTL_MINUTES`: duracion del cache
 - `HTTP_VERIFY_SSL`: dejalo en `true`; si tu Python local falla con certificados, para desarrollo puedes usar `false`
+- `WEATHER_ENSEMBLE_ENABLED`: si esta en `true`, combina Open-Meteo y MET Norway para meteorologia
+- `METNO_USER_AGENT`: identificador enviado a MET Norway; conviene poner un contacto real si expones la app
 - `AEMET_API_KEY`, `STORMGLASS_API_KEY`, `WORLDTIDES_API_KEY`: reservadas para proveedores futuros
 
 En Windows, `tzdata` es necesario para que Python reconozca `Atlantic/Canary`.
@@ -76,12 +79,13 @@ En Windows, `tzdata` es necesario para que Python reconozca `Atlantic/Canary`.
 
 - Open-Meteo Weather: `https://open-meteo.com/en/docs`
 - Open-Meteo Marine: `https://open-meteo.com/en/docs/marine-weather-api`
+- MET Norway Locationforecast: `https://api.met.no/weatherapi/locationforecast/2.0/documentation`
 
-Open-Meteo no requiere clave en el MVP. La marea se deriva de `sea_level_height_msl`, por lo que ayuda a decidir ventanas de pesca, pero no sustituye tablas oficiales ni debe usarse para navegacion.
+Open-Meteo y MET Norway no requieren clave. MET Norway exige un `User-Agent` identificable; ajusta `METNO_USER_AGENT` si vas a usar ARCAFISH de forma continuada o publica. La marea se deriva de `sea_level_height_msl`, por lo que ayuda a decidir ventanas de pesca, pero no sustituye tablas oficiales ni debe usarse para navegacion.
 
 ## Rendimiento de pronosticos
 
-El servicio cachea cada punto durante `FORECAST_CACHE_TTL_MINUTES` y pide Weather + Marine en paralelo para reducir la espera en cargas nuevas. Si necesitas que responda aun mas rapido, reduce `FORECAST_DAYS` a `3` o `5` en `.env`; la primera carga pedira menos datos y las siguientes usaran cache mientras no fuerces refresco.
+El servicio cachea cada punto durante `FORECAST_CACHE_TTL_MINUTES` y pide meteorologia + mar en paralelo para reducir la espera en cargas nuevas. Con `WEATHER_ENSEMBLE_ENABLED=true`, tambien pide MET Norway y promedia los campos meteorologicos comparables cuando ambos proveedores responden. Si necesitas que responda aun mas rapido, reduce `FORECAST_DAYS` a `3` o `5` en `.env`; la primera carga pedira menos datos y las siguientes usaran cache mientras no fuerces refresco.
 
 ## Scoring
 
