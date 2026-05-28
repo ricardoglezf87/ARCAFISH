@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -24,6 +24,11 @@ app.include_router(forecast.router)
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse(BASE_DIR / "static" / "favicon.ico", media_type="image/x-icon")
 
 
 @app.get("/", response_class=HTMLResponse)
